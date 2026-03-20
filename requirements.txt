@@ -1,0 +1,45 @@
+# Final comprehensive dependencies for ActivityWatch submodules
+pywebview>=5.1
+Pillow>=10.4.0
+requests>=2.32.3
+urllib3<2
+
+# Flask and RestX (Pinned for compatibility)
+Flask>=2.2.0,<3.0.0
+Werkzeug>=2.2.0,<3.0.0
+flask-restx>=1.0.3
+flask-cors
+itsdangerous>=2.1.2
+jinja2>=3.1.2
+markupsafe>=2.1.1
+
+# Database and Core
+peewee>=3.17.0,<4.0.0
+playhouse
+platformdirs==3.10.0
+iso8601
+aniso8601
+jsonschema>=4.3
+rfc3339-validator>=0.1.4
+strict-rfc3339>=0.7
+timeslot
+tomlkit
+tomli
+psutil
+persist-queue
+tabulate
+deprecation
+appdirs
+pefile
+
+# Watchers and OS Integration
+pynput
+pywin32; sys_platform == 'win32'
+wmi; sys_platform == 'win32'
+pywin32-ctypes; sys_platform == 'win32'
+pythonnet; sys_platform == 'win32'
+clr-loader; sys_platform == 'win32'
+Xlib; sys_platform == 'linux'
+python-dateutil
+typing-extensions
+bottle
