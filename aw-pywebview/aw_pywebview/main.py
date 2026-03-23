@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG = """
 [aw-pywebview]
-autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window"]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-input"]
 window_width = 1200
 window_height = 800
 server_start_timeout = 20

@@ -7,89 +7,119 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="logo">AW</div>
-          <div>
-            <div class="title">ActivityWatch</div>
-            <div class="subtitle">本地专注 · 中文桌面版</div>
+    <div class="app-shell">
+      <div class="workspace full-width-stack">
+        <header class="topbar card-shell">
+          <div class="topbar-copy">
+            <span class="eyebrow">Daily dashboard</span>
+            <div class="title-row">
+              <h1>一天活动总结</h1>
+              <span id="timeRange" class="range-pill">-</span>
+            </div>
+            <p>聚焦全天前台活跃应用分布与 24 小时节奏，保留刷新、报告生成与时间范围切换。</p>
           </div>
-        </div>
-        <div class="toolbar">
-          <button id="reportBtn" class="btn secondary">生成今日报告</button>
-          <button id="refreshBtn" class="btn">刷新数据</button>
-          <select id="rangeSelect" class="select">
-            <option value="1">近 24 小时</option>
-            <option value="3">近 3 天</option>
-            <option value="7">近 7 天</option>
-          </select>
-        </div>
-      </header>
 
-      <main class="grid">
-        <section class="card">
-          <div class="card-header">
-            <h2>概览</h2>
-            <span id="status" class="badge">加载中</span>
+          <div class="toolbar-panel">
+            <div class="status-wrap">
+              <span class="status-label">状态</span>
+              <span id="status" class="badge">加载中</span>
+            </div>
+            <div class="toolbar">
+              <select id="rangeSelect" class="select">
+                <option value="1">近 24 小时</option>
+                <option value="3">近 3 天</option>
+                <option value="7">近 7 天</option>
+              </select>
+              <button id="refreshBtn" class="btn secondary">刷新数据</button>
+              <button id="reportBtn" class="btn">生成今日报告</button>
+            </div>
           </div>
-          <div class="stats">
-            <div class="stat">
-              <div class="stat-label">有效时长</div>
-              <div id="activeDuration" class="stat-value">-</div>
+        </header>
+
+        <section class="stats-strip full-span-stats">
+          <div class="stat-chip card-shell translucent">
+            <span class="stat-chip-label">总活跃时间</span>
+            <strong id="activeDuration" class="stat-chip-value">-</strong>
+          </div>
+          <div class="stat-chip card-shell translucent">
+            <span class="stat-chip-label">总活跃应用数</span>
+            <strong id="appCount" class="stat-chip-value">-</strong>
+          </div>
+          <div class="stat-chip card-shell translucent">
+            <span class="stat-chip-label">平均切换频率</span>
+            <strong id="avgSwitchRate" class="stat-chip-value">-</strong>
+          </div>
+        </section>
+
+        <section class="chart-panel card-shell full-width-card">
+          <div class="card-header chart-header">
+            <div>
+              <h2>24 小时活跃度分析</h2>
+              <div class="hint">横轴固定为 0 - 24，纵轴按分钟显示该小时总活跃时长，柱内按应用堆叠</div>
             </div>
-            <div class="stat">
-              <div class="stat-label">应用数量</div>
-              <div id="appCount" class="stat-value">-</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label">时间区间</div>
-              <div id="timeRange" class="stat-value">-</div>
+            <span id="visualRangeHint" class="hint"></span>
+          </div>
+
+          <div class="chart-caption-row">
+            <span class="chart-unit">分钟</span>
+            <span class="chart-caption">悬浮可查看该小时 Top 5 应用与总活跃时长</span>
+          </div>
+          <div class="chart-board full-width-chart-board">
+            <div id="hourlyYAxis" class="chart-y-axis"></div>
+            <div class="chart-stage">
+              <div id="hourlyChart" class="hourly-chart full-width-hourly-chart"></div>
+              <div id="hourlyXAxis" class="chart-x-axis"></div>
+              <div id="hourlyTooltip" class="hourly-tooltip" hidden></div>
             </div>
           </div>
         </section>
 
-        <section class="card">
-          <div class="card-header">
-            <h2>Top 应用</h2>
-            <span class="hint">按使用时长排序</span>
-          </div>
-          <ul id="appList" class="list">
-            <li class="list-item">加载中...</li>
-          </ul>
-        </section>
-
-        <section class="card full">
-          <div class="card-header">
-            <h2>输入强度（Top 6 应用）</h2>
-            <span class="hint">键盘 / 鼠标点击 / 滚轮</span>
-          </div>
-          <div id="inputTable" class="input-table">
-            <div class="input-row header">
-              <div>应用</div>
-              <div>键盘</div>
-              <div>点击</div>
-              <div>滚轮</div>
+        <section class="distribution-panel card-shell full-width-card">
+          <div class="card-header compact">
+            <div>
+              <h2>应用时长占比</h2>
+              <span class="hint">左侧环形图与右侧列表严格共享同一套颜色映射</span>
             </div>
           </div>
+
+          <div class="distribution-layout">
+            <div class="donut-wrap large-donut-wrap">
+              <div id="donutChart" class="donut-chart" aria-label="应用时长占比图"></div>
+              <div class="donut-center">
+                <span class="donut-center-label">总活跃</span>
+                <strong id="donutTotal" class="donut-center-value">-</strong>
+              </div>
+            </div>
+
+            <ul id="appList" class="app-summary-list two-column-list">
+              <li class="app-summary-item empty">加载中...</li>
+            </ul>
+          </div>
         </section>
 
-        <section class="card full">
-          <div class="card-header">
-            <h2>时间轴</h2>
-            <span class="hint">按时间顺序展示活动与分类</span>
+        <section class="card-shell input-card compact-input-card full-width-card">
+          <div class="card-header compact input-card-header">
+            <div>
+              <h2>输入强度</h2>
+              <span class="hint">按键 / 点击 / 滚轮 / 鼠标移动，按小时趋势与应用归因同步展示</span>
+            </div>
           </div>
-          <div class="timeline-axis">
-            <div class="axis-label">00:00</div>
-            <div class="axis-label">06:00</div>
-            <div class="axis-label">12:00</div>
-            <div class="axis-label">18:00</div>
-            <div class="axis-label">24:00</div>
+
+          <div id="inputSummary" class="input-summary-grid">
+            <div class="input-summary-card empty-state">加载中...</div>
           </div>
-          <div class="timeline-bars" id="timelineBars"></div>
-          <div class="timeline" id="timeline"></div>
+
+          <div class="input-trend-section">
+            <div class="section-label">24 小时输入趋势</div>
+            <div id="inputTrend" class="input-trend-chart"></div>
+          </div>
+
+          <div class="input-apps-section">
+            <div class="section-label">应用输入归因</div>
+            <div id="inputTable" class="input-bars"></div>
+          </div>
         </section>
-      </main>
+      </div>
     </div>
 
     <script src="app.js"></script>

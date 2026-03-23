@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "aw-watcher-input"
+version = "0.1.0"
+description = "Input watcher for ActivityWatch"
+authors = ["ActivityWatch Developers"]
+license = "MPL-2.0"
+
+[tool.poetry.scripts]
+aw-watcher-input = "aw_watcher_input.main:main"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+aw-core = { path = "../aw-core" }
+aw-client = { path = "../aw-client" }
+aw-watcher-afk = { path = "../aw-watcher-afk" }
+aw-watcher-window = { path = "../aw-watcher-window" }
+
+[tool.poetry.dev-dependencies]
+pytest = "*"
+mypy = "*"
+pyinstaller = { version = "^6.6", python = "^3.8,<3.14" }
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

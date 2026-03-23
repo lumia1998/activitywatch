@@ -19,6 +19,7 @@ aw-client = {path = "../aw-client"}
 aw-server = {path = "../aw-server"}
 aw-watcher-afk = {path = "../aw-watcher-afk"}
 aw-watcher-window = {path = "../aw-watcher-window"}
+aw-watcher-input = {path = "../aw-watcher-input"}
 
 [build-system]
 requires = ["poetry-core"]

@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .data import (
     build_activity_from_summary,
+    build_activity_with_input,
     build_input_stats,
     build_input_stats_by_top_apps,
     build_input_trend,
@@ -155,7 +156,7 @@ def _build_report_json(summary: Dict[str, object], output_dir: str) -> str:
         "time_range": time_range,
         "duration": _extract_duration(summary),
         "input_total": input_total,
-        "top_apps": build_activity_from_summary(summary, limit=6),
+        "top_apps": build_activity_with_input(summary, start=start_dt, end=end_dt, limit=6),
         "input_top_apps": build_input_stats_by_top_apps(
             summary=summary,
             start=start_dt,
@@ -321,7 +322,7 @@ def generate_report_image(summary: Dict[str, object], output_dir: str) -> str:
         ("有效时长", _format_duration(duration), COLORS["orange"]),
         ("应用总数", f"{len(apps)}", COLORS["green"]),
         ("总输入量", f"{total_inputs}", COLORS["blue"]),
-        ("最活跃应用", apps[0]["app"] if apps else "None", COLORS["purple"]),
+        ("最活跃应用", apps[0].get("display_name") or apps[0]["app"] if apps else "None", COLORS["purple"]),
     ]
 
     stamp_w, stamp_h = 200, 140
@@ -412,9 +413,10 @@ def generate_report_image(summary: Dict[str, object], output_dir: str) -> str:
         draw.line((cx + 70, ay + 25, cx + 83, ay + 8), fill=COLORS["orange"], width=3)
         
         # Title with highlighter effect
-        tw = draw.textlength(app["app"], font=hand_font_lg)
+        app_label = app.get("display_name") or app["app"]
+        tw = draw.textlength(app_label, font=hand_font_lg)
         draw.rectangle((cx + 105, ay + 20, cx + 105 + tw, ay + 35), fill=COLORS["pink"])
-        draw.text((cx + 100, ay), app["app"], fill=COLORS["ink_primary"], font=hand_font_lg)
+        draw.text((cx + 100, ay), app_label, fill=COLORS["ink_primary"], font=hand_font_lg)
         
         # Duration
         draw.text((cx + cw - 200, ay + 5), _format_duration(app["duration"]), fill=COLORS["ink_secondary"], font=hand_font_md)
@@ -439,7 +441,7 @@ def generate_report_image(summary: Dict[str, object], output_dir: str) -> str:
             bar_w = (card_box[2] - card_box[0] - 40)
             draw.rectangle((card_box[0] + 20, iy + 45, card_box[0] + 20 + int(bar_w * ratio), iy + 60), fill=COLORS["purple"])
             
-            draw.text((card_box[0] + 20, iy + 10), item["app"], fill=COLORS["ink_primary"], font=hand_font_md)
+            draw.text((card_box[0] + 20, iy + 10), item.get("display_name") or item["app"], fill=COLORS["ink_primary"], font=hand_font_md)
             draw.text((card_box[2] - 100, iy + 10), f"{total}", fill=COLORS["ink_secondary"], font=hand_font_sm)
 
     # 8. Footer

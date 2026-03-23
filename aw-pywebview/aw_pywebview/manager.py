@@ -144,6 +144,20 @@ class Module:
 
         env = os.environ.copy()
         if self.type == "source":
+            # Add all source modules to PYTHONPATH
+            pythonpath_parts = [
+                os.path.join(_root_dir, "aw-core"),
+                os.path.join(_root_dir, "aw-client"),
+                os.path.join(_root_dir, "aw-server"),
+                os.path.join(_root_dir, "aw-watcher-afk"),
+                os.path.join(_root_dir, "aw-watcher-window"),
+                os.path.join(_root_dir, "aw-watcher-input"),
+            ]
+            existing_path = env.get("PYTHONPATH", "")
+            if existing_path:
+                pythonpath_parts.append(existing_path)
+            env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+
             # Run as python -m module_name
             py_exec = sys.executable
             # We need to use the package name, not the directory name with dash
