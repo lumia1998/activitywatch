@@ -1,0 +1,47 @@
+[project]
+name = "activitywatch"
+version = "0.1.0"
+description = "ActivityWatch - Time tracking software"
+requires-python = ">=3.10"
+dependencies = [
+    # aw-core
+    "jsonschema>=4.3",
+    "peewee>=3.0,<4.0",
+    "platformdirs>=3.10",
+    "iso8601",
+    "rfc3339-validator>=0.1.4",
+    "strict-rfc3339>=0.7",
+    "tomlkit",
+    "deprecation",
+    "timeslot",
+    "click",
+    # aw-client
+    "requests",
+    "persist-queue",
+    "tabulate",
+    "typing-extensions",
+    # aw-server
+    "flask>=2.2",
+    "flask-restx>=1.0.3",
+    "flask-cors",
+    "werkzeug>=2.3.3",
+    # aw-watcher-afk
+    "pynput",
+    # aw-watcher-window
+    "pywin32>=306",
+    "wmi",
+    # aw-pywebview
+    "pywebview>=5.1",
+    "Pillow>=10.4.0",
+    # Local path dependencies
+    "aw-core @ file:///${PROJECT_ROOT}/aw-core",
+    "aw-client @ file:///${PROJECT_ROOT}/aw-client",
+    "aw-server @ file:///${PROJECT_ROOT}/aw-server",
+    "aw-watcher-afk @ file:///${PROJECT_ROOT}/aw-watcher-afk",
+    "aw-watcher-window @ file:///${PROJECT_ROOT}/aw-watcher-window",
+    "aw-watcher-input @ file:///${PROJECT_ROOT}/aw-watcher-input",
+    "aw-pywebview @ file:///${PROJECT_ROOT}/aw-pywebview",
+]
+
+[tool.uv]
+package = false
