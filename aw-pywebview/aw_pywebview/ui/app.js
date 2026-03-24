@@ -1,3 +1,30 @@
+const {
+  formatDuration,
+  formatPreciseDuration,
+  formatHour,
+  formatMinutes,
+  formatNumber,
+  formatRate
+} = window.AwUiFormatters;
+const { escapeHtml } = window.AwUiHtml;
+const { createColorHelpers } = window.AwUiColors;
+const {
+  renderYAxisFor,
+  renderXAxisFor,
+  buildTooltipContent,
+  showTooltip,
+  hideTooltip,
+  createHourlyStackedBarChartRenderer
+} = window.AwUiCharts;
+const { renderInputSummary: renderInputSummaryGrid } = window.AwUiRenderers;
+
+const KEY_HOURS = new Set([0, 4, 8, 12, 16, 20, 24]);
+
+function syncXAxisTickLabel(tick, hour) {
+  tick.textContent = KEY_HOURS.has(hour) ? String(hour).padStart(2, '0') : '';
+  return tick;
+}
+
 const statusEl = document.getElementById('status');
 const activeDurationEl = document.getElementById('activeDuration');
 const appCountEl = document.getElementById('appCount');
@@ -14,80 +41,82 @@ const hourlyTooltipEl = document.getElementById('hourlyTooltip');
 const visualRangeHintEl = document.getElementById('visualRangeHint');
 const donutChartEl = document.getElementById('donutChart');
 const donutTotalEl = document.getElementById('donutTotal');
+const browserSummaryEl = document.getElementById('browserSummary');
+const browserDomainListEl = document.getElementById('browserDomainList');
+const browserDonutChartEl = document.getElementById('browserDonutChart');
+const browserDonutTotalEl = document.getElementById('browserDonutTotal');
+const browserTrendChartEl = document.getElementById('browserTrendChart');
+const browserTrendYAxisEl = document.getElementById('browserTrendYAxis');
+const browserTrendXAxisEl = document.getElementById('browserTrendXAxis');
+const browserTrendTooltipEl = document.getElementById('browserTrendTooltip');
+const browserTrendHintEl = document.getElementById('browserTrendHint');
 const refreshBtn = document.getElementById('refreshBtn');
-const reportBtn = document.getElementById('reportBtn');
 const rangeSelect = document.getElementById('rangeSelect');
+const themeToggleBtn = document.getElementById('themeToggle');
+const dashboardTabEls = Array.from(document.querySelectorAll('.dashboard-tab'));
+const dashboardPanelEls = Array.from(document.querySelectorAll('.dashboard-panel'));
 
-const FALLBACK_COLORS = ['#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#f9a8d4', '#67e8f9', '#86efac', '#fdba74'];
-const KEY_HOURS = new Set([0, 4, 8, 12, 16, 20, 24]);
+const THEME_STORAGE_KEY = 'aw-pywebview-theme';
+const DEFAULT_THEME = 'light';
 
 const appState = {
   activeHour: null,
+  browserActiveHour: null,
+  currentPanel: 'applications',
   colorMap: new Map(),
   visualization: null,
   loadToken: 0,
-  bridgeReadyPromise: null
+  bridgeReadyPromise: null,
+  theme: DEFAULT_THEME
 };
 
-function formatDuration(seconds) {
-  if (!seconds || seconds <= 0) return '-';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours <= 0) return `${minutes}m`;
-  return `${hours}h ${minutes}m`;
+const { setColorMap, getColor } = createColorHelpers(appState);
+
+function normalizeTheme(theme) {
+  return theme === 'dark' ? 'dark' : DEFAULT_THEME;
 }
 
-function formatPreciseDuration(seconds) {
-  if (!seconds || seconds <= 0) return '0m';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainSeconds = Math.round(seconds % 60);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${remainSeconds}s`;
-  return `${remainSeconds}s`;
-}
-
-function formatHour(hour) {
-  return `${hour.toString().padStart(2, '0')}:00`;
-}
-
-function formatMinutes(seconds) {
-  return `${Math.round((seconds || 0) / 60)}m`;
-}
-
-function formatNumber(value) {
-  return new Intl.NumberFormat('zh-CN').format(Math.round(value || 0));
-}
-
-function formatRate(value) {
-  if (!value) return '0 / 小时';
-  return `${Math.round(value)} / 小时`;
-}
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function setColorMap(colorMap = {}) {
-  appState.colorMap = new Map(Object.entries(colorMap));
-}
-
-function getColor(key) {
-  if (appState.colorMap.has(key)) {
-    return appState.colorMap.get(key);
+function readStoredTheme() {
+  try {
+    return normalizeTheme(window.localStorage.getItem(THEME_STORAGE_KEY));
+  } catch (_error) {
+    return DEFAULT_THEME;
   }
-  let hash = 0;
-  for (let i = 0; i < key.length; i += 1) {
-    hash = (hash + key.charCodeAt(i) * 31) % FALLBACK_COLORS.length;
+}
+
+function persistTheme(theme) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (_error) {
+    // ignore storage errors to avoid blocking dashboard loading
   }
-  const color = FALLBACK_COLORS[hash];
-  appState.colorMap.set(key, color);
-  return color;
+}
+
+function updateThemeToggle() {
+  if (!themeToggleBtn) return;
+  const isDark = appState.theme === 'dark';
+  themeToggleBtn.setAttribute('aria-pressed', String(isDark));
+  themeToggleBtn.setAttribute('aria-label', isDark ? '切换到浅色主题' : '切换到深色主题');
+  themeToggleBtn.setAttribute('title', isDark ? '切换到浅色主题' : '切换到深色主题');
+}
+
+function applyTheme(theme, persist = false) {
+  const nextTheme = normalizeTheme(theme);
+  appState.theme = nextTheme;
+  document.documentElement.dataset.theme = nextTheme;
+  updateThemeToggle();
+  if (persist) {
+    persistTheme(nextTheme);
+  }
+}
+
+function toggleTheme() {
+  applyTheme(appState.theme === 'dark' ? 'light' : 'dark', true);
+}
+
+function initializeTheme() {
+  const initialTheme = normalizeTheme(document.documentElement.dataset.theme || readStoredTheme());
+  applyTheme(initialTheme);
 }
 
 function setActiveHour(hour) {
@@ -99,48 +128,84 @@ function onHourSelect(hour) {
   renderVisualizations(appState.visualization);
 }
 
-function buildTooltipContent(item) {
-  const topSegments = (item.segments || []).slice(0, 5);
-  if (!topSegments.length) {
-    return `
-      <div class="tooltip-header">
-        <span class="tooltip-hour">${formatHour(item.hour)}</span>
-        <span class="tooltip-total">总活跃 0m</span>
-      </div>
-      <div class="tooltip-list">
-        <div class="tooltip-item"><span class="tooltip-name">暂无活跃应用</span></div>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="tooltip-header">
-      <span class="tooltip-hour">${formatHour(item.hour)}</span>
-      <span class="tooltip-total">总活跃 ${formatMinutes(item.total)}</span>
-    </div>
-    <div class="tooltip-list">
-      ${topSegments.map(segment => `
-        <div class="tooltip-item">
-          <span class="tooltip-swatch" style="background:${segment.color || getColor(segment.app)}"></span>
-          <span class="tooltip-name">${escapeHtml(segment.app)}</span>
-          <span class="tooltip-value">${formatPreciseDuration(segment.duration)}</span>
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-
 function showHourlyTooltip(item) {
-  if (!hourlyTooltipEl) return;
-  hourlyTooltipEl.innerHTML = buildTooltipContent(item);
-  hourlyTooltipEl.hidden = false;
+  showTooltip(hourlyTooltipEl, item, {
+    labelKey: 'app',
+    emptyLabel: '暂无活跃应用',
+    totalLabel: '总活跃',
+    formatHour,
+    formatMinutes,
+    formatPreciseDuration,
+    escapeHtml,
+    getColor
+  });
 }
 
 function hideHourlyTooltip() {
-  if (!hourlyTooltipEl) return;
-  hourlyTooltipEl.hidden = true;
-  hourlyTooltipEl.innerHTML = '';
+  hideTooltip(hourlyTooltipEl);
 }
+
+function showBrowserTrendTooltip(item) {
+  showTooltip(browserTrendTooltipEl, item, {
+    labelKey: 'domain',
+    emptyLabel: '暂无网页浏览',
+    totalLabel: '总浏览',
+    formatHour,
+    formatMinutes,
+    formatPreciseDuration,
+    escapeHtml,
+    getColor
+  });
+}
+
+function hideBrowserTrendTooltip() {
+  hideTooltip(browserTrendTooltipEl);
+}
+
+const renderApplicationHourlyBars = createHourlyStackedBarChartRenderer({
+  chartEl: hourlyChartEl,
+  axisEl: hourlyYAxisEl,
+  xAxisEl: hourlyXAxisEl,
+  tooltipEl: hourlyTooltipEl,
+  getSelectedHour: () => appState.activeHour,
+  setSelectedHour: setActiveHour,
+  onHourChange: () => renderVisualizations(appState.visualization),
+  onShowTooltip: showHourlyTooltip,
+  onHideTooltip: hideHourlyTooltip,
+  getSegmentKey: segment => segment.app,
+  getColor,
+  xAxisOptions: {
+    keyHours: KEY_HOURS,
+    decorateTick: syncXAxisTickLabel
+  }
+});
+
+const renderBrowserHourlyBars = createHourlyStackedBarChartRenderer({
+  chartEl: browserTrendChartEl,
+  axisEl: browserTrendYAxisEl,
+  xAxisEl: browserTrendXAxisEl,
+  tooltipEl: browserTrendTooltipEl,
+  getSelectedHour: () => appState.browserActiveHour,
+  setSelectedHour: hour => {
+    appState.browserActiveHour = hour;
+  },
+  onHourChange: trend => renderBrowserTrend(trend),
+  onShowTooltip: showBrowserTrendTooltip,
+  onHideTooltip: hideBrowserTrendTooltip,
+  getSegmentKey: segment => segment.domain,
+  getColor,
+  renderHint: trend => {
+    if (!browserTrendHintEl) return;
+    const meta = trend?.meta || {};
+    const daysLabel = meta.days > 1 ? ` · ${meta.days} 天投影` : '';
+    browserTrendHintEl.textContent = `24 小时网页浏览趋势${daysLabel}`;
+  },
+  renderEmptyHint: () => {
+    if (browserTrendHintEl) {
+      browserTrendHintEl.textContent = '24 小时网页浏览趋势';
+    }
+  }
+});
 
 function renderApps(items) {
   appListEl.innerHTML = '';
@@ -174,6 +239,117 @@ function renderApps(items) {
   });
 }
 
+function buildSummaryCards(summary, cards) {
+  return cards.map(card => `
+    <div class="input-summary-card">
+      <span class="input-summary-label">${card.label}</span>
+      <strong class="input-summary-value">${card.value}</strong>
+      <span class="input-summary-meta">${card.meta}</span>
+    </div>
+  `).join('');
+}
+
+function renderBrowserSummary(browserSummary) {
+  if (!browserSummaryEl) return;
+  if (!browserSummary?.available) {
+    browserSummaryEl.innerHTML = '<div class="input-summary-card empty-state">暂无浏览器数据</div>';
+    return;
+  }
+
+  const topDomain = browserSummary.topDomain;
+  browserSummaryEl.innerHTML = buildSummaryCards(browserSummary, [
+    {
+      label: '浏览总时长',
+      value: formatDuration(browserSummary.totalDuration),
+      meta: '当前时间范围内网页前台停留时长'
+    },
+    {
+      label: '活跃域名数',
+      value: formatNumber(browserSummary.domainCount),
+      meta: `覆盖 ${formatNumber(browserSummary.urlCount || 0)} 个 URL 聚合项`
+    },
+    {
+      label: 'Top 域名',
+      value: topDomain?.domain || '-',
+      meta: topDomain ? `${formatDuration(topDomain.duration)} · ${(topDomain.share * 100).toFixed(1)}%` : '暂无主域名'
+    }
+  ]);
+}
+
+function renderBrowserList(items) {
+  if (!browserDomainListEl) return;
+  browserDomainListEl.innerHTML = '';
+  if (!items?.length) {
+    browserDomainListEl.innerHTML = '<li class="app-summary-item empty">暂无浏览器数据</li>';
+    return;
+  }
+
+  items.forEach(item => {
+    const li = document.createElement('li');
+    li.className = 'app-summary-item';
+    li.innerHTML = `
+      <span class="app-summary-swatch" style="background:${getColor(item.domain)}"></span>
+      <div class="app-summary-main">
+        <div class="app-summary-topline">
+          <span class="app-summary-name">${escapeHtml(item.domain)}</span>
+          <span class="app-summary-duration">${formatDuration(item.duration)}</span>
+        </div>
+        <div class="app-summary-subline">
+          <span class="app-summary-process">${formatNumber(item.urlCount || 0)} 个 URL</span>
+          <span class="app-summary-metrics">占比 ${(item.share * 100).toFixed(1)}%</span>
+        </div>
+      </div>
+    `;
+    browserDomainListEl.appendChild(li);
+  });
+}
+
+function buildDonutSegments(items, keyName) {
+  const total = items.reduce((sum, item) => sum + (item.duration || 0), 0);
+  if (!total) return [];
+
+  let current = 0;
+  return items.map(item => {
+    const value = item.duration || 0;
+    const start = current;
+    const ratio = value / total;
+    current += ratio * 360;
+    return {
+      ...item,
+      start,
+      end: current,
+      ratio,
+      color: getColor(item[keyName])
+    };
+  });
+}
+
+function renderDonut(items) {
+  donutTotalEl.textContent = '-';
+  donutChartEl.style.background = 'conic-gradient(var(--donut-empty) 0deg 360deg)';
+
+  if (!items.length) {
+    return;
+  }
+
+  const segments = buildDonutSegments(items, 'app');
+  const total = items.reduce((sum, item) => sum + (item.duration || 0), 0);
+  donutTotalEl.textContent = formatDuration(total);
+  donutChartEl.style.background = `conic-gradient(${segments.map(segment => `${segment.color} ${segment.start}deg ${segment.end}deg`).join(', ')})`;
+}
+
+function renderBrowserDonut(items) {
+  if (!browserDonutChartEl || !browserDonutTotalEl) return;
+  browserDonutTotalEl.textContent = '-';
+  browserDonutChartEl.style.background = 'conic-gradient(var(--donut-empty) 0deg 360deg)';
+  if (!items?.length) return;
+
+  const segments = buildDonutSegments(items, 'domain');
+  const total = items.reduce((sum, item) => sum + (item.duration || 0), 0);
+  browserDonutTotalEl.textContent = formatDuration(total);
+  browserDonutChartEl.style.background = `conic-gradient(${segments.map(segment => `${segment.color} ${segment.start}deg ${segment.end}deg`).join(', ')})`;
+}
+
 function createMetricBlock(label, value, maxValue, accentClass = '') {
   const wrapper = document.createElement('div');
   wrapper.className = `input-metric-block ${accentClass}`.trim();
@@ -191,34 +367,10 @@ function createMetricBlock(label, value, maxValue, accentClass = '') {
   return wrapper;
 }
 
-function renderInputSummary(inputSummary) {
-  if (!inputSummaryEl) return;
-  inputSummaryEl.innerHTML = '';
-
-  if (!inputSummary?.available) {
-    inputSummaryEl.innerHTML = '<div class="input-summary-card empty-state">暂无输入数据桶</div>';
-    return;
-  }
-
-  const totals = inputSummary.totals || {};
-  const cards = [
-    { label: '键盘敲击', value: formatNumber(totals.presses), meta: '按键总次数' },
-    { label: '鼠标点击', value: formatNumber(totals.clicks), meta: '左键/右键聚合' },
-    { label: '滚轮滚动', value: formatNumber(totals.scroll), meta: 'scrollX + scrollY' },
-    { label: '鼠标移动', value: formatNumber(totals.moves), meta: 'deltaX + deltaY' },
-    { label: '平均速率', value: formatRate(inputSummary.averagePerHour), meta: '每小时输入总量' },
-    { label: '峰值时段', value: inputSummary.peakHour ? formatHour(inputSummary.peakHour.hour) : '-', meta: inputSummary.peakHour ? `${formatNumber(inputSummary.peakHour.total)} 次输入` : '暂无峰值' }
-  ];
-
-  cards.forEach(card => {
-    const item = document.createElement('div');
-    item.className = 'input-summary-card';
-    item.innerHTML = `
-      <span class="input-summary-label">${card.label}</span>
-      <strong class="input-summary-value">${card.value}</strong>
-      <span class="input-summary-meta">${card.meta}</span>
-    `;
-    inputSummaryEl.appendChild(item);
+function renderInputSummary(summary) {
+  renderInputSummaryGrid(inputSummaryEl, summary, {
+    formatNumber,
+    formatRate
   });
 }
 
@@ -288,109 +440,12 @@ function renderInputTable(items) {
   });
 }
 
-function buildDonutSegments(items) {
-  const total = items.reduce((sum, item) => sum + (item.duration || 0), 0);
-  if (!total) return [];
-
-  let current = 0;
-  return items.map(item => {
-    const value = item.duration || 0;
-    const start = current;
-    const ratio = value / total;
-    current += ratio * 360;
-    return {
-      ...item,
-      start,
-      end: current,
-      ratio,
-      color: getColor(item.app)
-    };
-  });
-}
-
-function renderDonut(items) {
-  donutTotalEl.textContent = '-';
-  donutChartEl.style.background = 'conic-gradient(#dbe6ff 0deg 360deg)';
-
-  if (!items.length) {
-    return;
-  }
-
-  const segments = buildDonutSegments(items);
-  const total = items.reduce((sum, item) => sum + (item.duration || 0), 0);
-  donutTotalEl.textContent = formatDuration(total);
-  donutChartEl.style.background = `conic-gradient(${segments.map(segment => `${segment.color} ${segment.start}deg ${segment.end}deg`).join(', ')})`;
-}
-
-function renderYAxis(maxDuration) {
-  if (!hourlyYAxisEl) return;
-  hourlyYAxisEl.innerHTML = '';
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map(ratio => Math.round((maxDuration * ratio) / 60));
-  ticks.reverse().forEach(value => {
-    const tick = document.createElement('span');
-    tick.textContent = `${value}`;
-    hourlyYAxisEl.appendChild(tick);
-  });
-}
-
-function renderXAxis() {
-  if (!hourlyXAxisEl) return;
-  hourlyXAxisEl.innerHTML = '';
-  Array.from({ length: 25 }, (_, hour) => hour).forEach(hour => {
-    const tick = document.createElement('span');
-    tick.textContent = KEY_HOURS.has(hour) ? String(hour).padStart(2, '0') : '';
-    if (KEY_HOURS.has(hour)) tick.classList.add('major');
-    hourlyXAxisEl.appendChild(tick);
-  });
-}
-
 function renderHourlyChart(hourlyBars) {
-  hourlyChartEl.innerHTML = '';
-  hideHourlyTooltip();
-  renderXAxis();
-  if (!hourlyBars?.length) {
-    renderYAxis(0);
-    return;
-  }
+  renderApplicationHourlyBars({ hourlyBars: hourlyBars || [] });
+}
 
-  const maxDuration = Math.max(...hourlyBars.map(item => item.total || 0), 0);
-  renderYAxis(maxDuration);
-
-  hourlyBars.forEach(item => {
-    const barDiv = document.createElement('div');
-    barDiv.className = 'hour-bar';
-    barDiv.dataset.hour = String(item.hour);
-    barDiv.tabIndex = 0;
-    if (appState.activeHour === item.hour) barDiv.classList.add('selected');
-
-    const segmentsDiv = document.createElement('div');
-    segmentsDiv.className = 'bar-segments';
-    const barHeight = maxDuration > 0 ? Math.max((item.total / maxDuration) * 250, item.total > 0 ? 12 : 8) : 8;
-    segmentsDiv.style.height = `${barHeight}px`;
-
-    (item.segments || []).forEach(segment => {
-      const segmentEl = document.createElement('div');
-      segmentEl.className = 'bar-segment';
-      const segmentHeight = item.total > 0 ? Math.max((segment.duration / item.total) * barHeight, 4) : 4;
-      segmentEl.style.height = `${segmentHeight}px`;
-      segmentEl.style.background = segment.color || getColor(segment.app);
-      segmentsDiv.appendChild(segmentEl);
-    });
-
-    const label = document.createElement('div');
-    label.className = 'hour-label';
-    label.textContent = item.hour.toString().padStart(2, '0');
-
-    barDiv.appendChild(segmentsDiv);
-    barDiv.appendChild(label);
-    barDiv.addEventListener('click', () => onHourSelect(item.hour));
-    barDiv.addEventListener('mouseenter', () => showHourlyTooltip(item));
-    barDiv.addEventListener('focus', () => showHourlyTooltip(item));
-    barDiv.addEventListener('mouseleave', hideHourlyTooltip);
-    barDiv.addEventListener('blur', hideHourlyTooltip);
-
-    hourlyChartEl.appendChild(barDiv);
-  });
+function renderBrowserTrend(trend) {
+  renderBrowserHourlyBars(trend || { hourlyBars: [] });
 }
 
 function renderVisualizations(visualization) {
@@ -424,6 +479,10 @@ function clearDashboard() {
   timeRangeEl.textContent = '-';
   renderApps([]);
   renderDonut([]);
+  renderBrowserSummary(null);
+  renderBrowserList([]);
+  renderBrowserDonut([]);
+  renderBrowserTrend(null);
   renderInputSummary(null);
   renderInputTrend([]);
   renderInputTable([]);
@@ -448,11 +507,20 @@ function setDashboardFromPayload(payload) {
     timeRangeEl.textContent = '-';
   }
 
-  setColorMap(visualization?.colorMap || {});
+  const mergedColorMap = {
+    ...(visualization?.colorMap || {}),
+    ...((payload.browserTrend && payload.browserTrend.colorMap) || {})
+  };
+  setColorMap(mergedColorMap);
 
   const activity = payload.activity || [];
   renderApps(activity);
   renderDonut(activity);
+  renderBrowserSummary(payload.browserSummary || null);
+  renderBrowserList(payload.browserByDomain || []);
+  renderBrowserDonut(payload.browserByDomain || []);
+  appState.browserActiveHour = payload.browserTrend?.activeHour ?? null;
+  renderBrowserTrend(payload.browserTrend || null);
   renderInputSummary(payload.inputSummary || null);
   renderInputTrend(payload.inputTrend || []);
   renderInputTable(payload.inputByApp || payload.inputTopApps || []);
@@ -505,24 +573,6 @@ async function loadDashboardPayload(days) {
   return api.get_dashboard_data(days, 12, 0, 6);
 }
 
-async function generateReport() {
-  statusEl.textContent = '生成报告中...';
-  try {
-    const api = await waitForPywebviewApi();
-    const path = await api.generate_report_today();
-    if (path) {
-      statusEl.textContent = '报告已生成';
-      alert(`今日报告已生成并保存至:\n${path}`);
-    } else {
-      statusEl.textContent = '生成失败';
-      alert('报告生成失败，请检查数据是否完整。');
-    }
-  } catch (err) {
-    statusEl.textContent = '生成失败';
-    console.error(err);
-  }
-}
-
 async function loadData() {
   const token = ++appState.loadToken;
   const days = Number(rangeSelect.value || 1);
@@ -555,13 +605,47 @@ async function loadData() {
   }
 }
 
+function setActivePanel(panelName) {
+  appState.currentPanel = panelName;
+  dashboardTabEls.forEach(button => {
+    const selected = button.dataset.panel === panelName;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  dashboardPanelEls.forEach(panel => {
+    panel.hidden = panel.dataset.panel !== panelName;
+  });
+}
+
+function initializeDashboardTabs() {
+  if (!dashboardTabEls.length || !dashboardPanelEls.length) return;
+  dashboardTabEls.forEach(button => {
+    button.addEventListener('click', () => {
+      setActivePanel(button.dataset.panel || 'applications');
+    });
+  });
+  setActivePanel(appState.currentPanel);
+}
+
 refreshBtn.addEventListener('click', () => loadData());
-reportBtn.addEventListener('click', () => generateReport());
 rangeSelect.addEventListener('change', () => loadData());
+if (themeToggleBtn) {
+  themeToggleBtn.addEventListener('click', toggleTheme);
+}
 
 window.onHourSelect = onHourSelect;
+window.AwPywebviewApp = {
+  KEY_HOURS,
+  renderYAxisFor,
+  renderXAxisFor,
+  buildTooltipContent,
+  showTooltip,
+  hideTooltip
+};
 
 window.addEventListener('DOMContentLoaded', async () => {
+  initializeTheme();
+  initializeDashboardTabs();
   try {
     await waitForPywebviewApi();
   } catch (err) {

@@ -4,11 +4,22 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ActivityWatch</title>
+    <script>
+      (() => {
+        const themeKey = 'aw-pywebview-theme';
+        try {
+          const theme = window.localStorage.getItem(themeKey);
+          document.documentElement.dataset.theme = theme === 'dark' || theme === 'light' ? theme : 'light';
+        } catch (_error) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <div class="app-shell">
-      <div class="workspace full-width-stack">
+      <div class="workspace">
         <header class="topbar card-shell">
           <div class="topbar-copy">
             <span class="eyebrow">Daily dashboard</span>
@@ -16,7 +27,20 @@
               <h1>一天活动总结</h1>
               <span id="timeRange" class="range-pill">-</span>
             </div>
-            <p>聚焦全天前台活跃应用分布与 24 小时节奏，保留刷新、报告生成与时间范围切换。</p>
+            <section class="stats-strip topbar-stats">
+              <div class="stat-chip stat-chip-inline">
+                <span class="stat-chip-label">总活跃时间</span>
+                <strong id="activeDuration" class="stat-chip-value">-</strong>
+              </div>
+              <div class="stat-chip stat-chip-inline">
+                <span class="stat-chip-label">总活跃应用数</span>
+                <strong id="appCount" class="stat-chip-value">-</strong>
+              </div>
+              <div class="stat-chip stat-chip-inline">
+                <span class="stat-chip-label">平均切换频率</span>
+                <strong id="avgSwitchRate" class="stat-chip-value">-</strong>
+              </div>
+            </section>
           </div>
 
           <div class="toolbar-panel">
@@ -25,103 +49,153 @@
               <span id="status" class="badge">加载中</span>
             </div>
             <div class="toolbar">
+              <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="切换到深色主题" title="切换到深色主题">
+                <span class="theme-toggle-icon theme-toggle-sun" aria-hidden="true">☀</span>
+                <span class="theme-toggle-icon theme-toggle-moon" aria-hidden="true">☾</span>
+              </button>
               <select id="rangeSelect" class="select">
                 <option value="1">近 24 小时</option>
                 <option value="3">近 3 天</option>
                 <option value="7">近 7 天</option>
               </select>
               <button id="refreshBtn" class="btn secondary">刷新数据</button>
-              <button id="reportBtn" class="btn">生成今日报告</button>
             </div>
           </div>
         </header>
 
-        <section class="stats-strip full-span-stats">
-          <div class="stat-chip card-shell translucent">
-            <span class="stat-chip-label">总活跃时间</span>
-            <strong id="activeDuration" class="stat-chip-value">-</strong>
-          </div>
-          <div class="stat-chip card-shell translucent">
-            <span class="stat-chip-label">总活跃应用数</span>
-            <strong id="appCount" class="stat-chip-value">-</strong>
-          </div>
-          <div class="stat-chip card-shell translucent">
-            <span class="stat-chip-label">平均切换频率</span>
-            <strong id="avgSwitchRate" class="stat-chip-value">-</strong>
-          </div>
-        </section>
-
-        <section class="chart-panel card-shell full-width-card">
-          <div class="card-header chart-header">
-            <div>
-              <h2>24 小时活跃度分析</h2>
-              <div class="hint">横轴固定为 0 - 24，纵轴按分钟显示该小时总活跃时长，柱内按应用堆叠</div>
-            </div>
-            <span id="visualRangeHint" class="hint"></span>
-          </div>
-
-          <div class="chart-caption-row">
-            <span class="chart-unit">分钟</span>
-            <span class="chart-caption">悬浮可查看该小时 Top 5 应用与总活跃时长</span>
-          </div>
-          <div class="chart-board full-width-chart-board">
-            <div id="hourlyYAxis" class="chart-y-axis"></div>
-            <div class="chart-stage">
-              <div id="hourlyChart" class="hourly-chart full-width-hourly-chart"></div>
-              <div id="hourlyXAxis" class="chart-x-axis"></div>
-              <div id="hourlyTooltip" class="hourly-tooltip" hidden></div>
-            </div>
-          </div>
-        </section>
-
-        <section class="distribution-panel card-shell full-width-card">
-          <div class="card-header compact">
-            <div>
-              <h2>应用时长占比</h2>
-              <span class="hint">左侧环形图与右侧列表严格共享同一套颜色映射</span>
+        <div class="dashboard-layout">
+          <div class="dashboard-tabs-wrap card-shell translucent">
+            <div class="dashboard-tabs" role="tablist" aria-label="Dashboard sections">
+              <button class="dashboard-tab active" type="button" data-panel="applications" aria-pressed="true">应用分析</button>
+              <button class="dashboard-tab" type="button" data-panel="browser" aria-pressed="false">浏览器分析</button>
+              <button class="dashboard-tab" type="button" data-panel="input" aria-pressed="false">输入强度</button>
             </div>
           </div>
 
-          <div class="distribution-layout">
-            <div class="donut-wrap large-donut-wrap">
-              <div id="donutChart" class="donut-chart" aria-label="应用时长占比图"></div>
-              <div class="donut-center">
-                <span class="donut-center-label">总活跃</span>
-                <strong id="donutTotal" class="donut-center-value">-</strong>
-              </div>
-            </div>
+          <main class="dashboard-main">
+            <section class="dashboard-panel" data-panel="applications">
+              <section class="chart-panel card-shell full-width-card">
+                <div class="card-header chart-header">
+                  <div>
+                    <h2>24 小时活跃度分析</h2>
+                    <div class="hint">横轴固定为 0 - 24，纵轴按分钟显示该小时总活跃时长，柱内按应用堆叠</div>
+                  </div>
+                  <span id="visualRangeHint" class="hint"></span>
+                </div>
 
-            <ul id="appList" class="app-summary-list two-column-list">
-              <li class="app-summary-item empty">加载中...</li>
-            </ul>
-          </div>
-        </section>
+                <div class="chart-caption-row">
+                  <span class="chart-unit">分钟</span>
+                  <span class="chart-caption">悬浮可查看该小时 Top 5 应用与总活跃时长</span>
+                </div>
+                <div class="chart-board full-width-chart-board">
+                  <div id="hourlyYAxis" class="chart-y-axis"></div>
+                  <div class="chart-stage">
+                    <div id="hourlyChart" class="hourly-chart full-width-hourly-chart"></div>
+                    <div id="hourlyXAxis" class="chart-x-axis"></div>
+                    <div id="hourlyTooltip" class="hourly-tooltip" hidden></div>
+                  </div>
+                </div>
+              </section>
 
-        <section class="card-shell input-card compact-input-card full-width-card">
-          <div class="card-header compact input-card-header">
-            <div>
-              <h2>输入强度</h2>
-              <span class="hint">按键 / 点击 / 滚轮 / 鼠标移动，按小时趋势与应用归因同步展示</span>
-            </div>
-          </div>
+              <section class="distribution-panel card-shell full-width-card">
+                <div class="card-header compact">
+                  <div>
+                    <h2>应用时长占比</h2>
+                  </div>
+                </div>
 
-          <div id="inputSummary" class="input-summary-grid">
-            <div class="input-summary-card empty-state">加载中...</div>
-          </div>
+                <div class="distribution-layout">
+                  <div class="donut-wrap large-donut-wrap">
+                    <div id="donutChart" class="donut-chart" aria-label="应用时长占比图"></div>
+                    <div class="donut-center">
+                      <span class="donut-center-label">总活跃</span>
+                      <strong id="donutTotal" class="donut-center-value">-</strong>
+                    </div>
+                  </div>
 
-          <div class="input-trend-section">
-            <div class="section-label">24 小时输入趋势</div>
-            <div id="inputTrend" class="input-trend-chart"></div>
-          </div>
+                  <ul id="appList" class="app-summary-list two-column-list">
+                    <li class="app-summary-item empty">加载中...</li>
+                  </ul>
+                </div>
+              </section>
+            </section>
 
-          <div class="input-apps-section">
-            <div class="section-label">应用输入归因</div>
-            <div id="inputTable" class="input-bars"></div>
-          </div>
-        </section>
+            <section class="dashboard-panel" data-panel="browser" hidden>
+              <section class="distribution-panel card-shell full-width-card browser-panel-shell">
+                <div class="card-header compact">
+                  <div>
+                    <h2>浏览器网页分析</h2>
+                  </div>
+                </div>
+
+                <div id="browserSummary" class="browser-summary-grid">
+                  <div class="input-summary-card empty-state">加载中...</div>
+                </div>
+
+                <div class="distribution-layout browser-distribution-layout">
+                  <div class="donut-wrap large-donut-wrap">
+                    <div id="browserDonutChart" class="donut-chart" aria-label="浏览器网页域名占比图"></div>
+                    <div class="donut-center">
+                      <span class="donut-center-label">浏览总时长</span>
+                      <strong id="browserDonutTotal" class="donut-center-value">-</strong>
+                    </div>
+                  </div>
+
+                  <ul id="browserDomainList" class="app-summary-list two-column-list">
+                    <li class="app-summary-item empty">加载中...</li>
+                  </ul>
+                </div>
+
+                <div class="browser-trend-section">
+                  <div class="chart-caption-row browser-chart-caption-row">
+                    <span class="chart-unit">分钟</span>
+                    <span class="chart-caption" id="browserTrendHint">24 小时网页浏览趋势</span>
+                  </div>
+                  <div class="chart-board full-width-chart-board">
+                    <div id="browserTrendYAxis" class="chart-y-axis"></div>
+                    <div class="chart-stage">
+                      <div id="browserTrendChart" class="hourly-chart full-width-hourly-chart"></div>
+                      <div id="browserTrendXAxis" class="chart-x-axis"></div>
+                      <div id="browserTrendTooltip" class="hourly-tooltip" hidden></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </section>
+
+            <section class="dashboard-panel" data-panel="input" hidden>
+              <section class="card-shell input-card compact-input-card full-width-card">
+                <div class="card-header compact input-card-header">
+                  <div>
+                    <h2>输入强度</h2>
+                  </div>
+                </div>
+
+                <div id="inputSummary" class="input-summary-grid">
+                  <div class="input-summary-card empty-state">加载中...</div>
+                </div>
+
+                <div class="input-trend-section">
+                  <div class="section-label">24 小时输入趋势</div>
+                  <div id="inputTrend" class="input-trend-chart"></div>
+                </div>
+
+                <div class="input-apps-section">
+                  <div class="section-label">应用输入归因</div>
+                  <div id="inputTable" class="input-bars"></div>
+                </div>
+              </section>
+            </section>
+          </main>
+        </div>
       </div>
     </div>
 
+    <script src="utils/formatters.js"></script>
+    <script src="utils/html.js"></script>
+    <script src="utils/colors.js"></script>
+    <script src="charts/hourlyStackedBarChart.js"></script>
+    <script src="renderers/inputSummary.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
