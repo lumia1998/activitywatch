@@ -1,9 +1,10 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from aw_client import ActivityWatchClient
 from aw_client.queries import DesktopQueryParams, fullDesktopQuery
@@ -80,6 +81,25 @@ def _parse_timestamp(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 
+def _extract_timezone(reference: object) -> Optional[tzinfo]:
+    if isinstance(reference, datetime):
+        return reference.tzinfo
+    if isinstance(reference, str):
+        return _parse_timestamp(reference).tzinfo
+    return None
+
+
+def _convert_to_timezone(value: datetime, target_tz: Optional[tzinfo]) -> datetime:
+    if not target_tz or value.tzinfo is None:
+        return value
+    return value.astimezone(target_tz)
+
+
+def _summary_timezone(summary: Dict[str, object]) -> Optional[tzinfo]:
+    time_range = summary.get("time_range", {}) if isinstance(summary, dict) else {}
+    return _extract_timezone(time_range.get("start"))
+
+
 def _build_summary_with_client(
     start: datetime, end: datetime, client: ActivityWatchClient
 ) -> Dict[str, object]:
@@ -91,11 +111,16 @@ def _build_summary_with_client(
     bid_browsers = [
         bid
         for bid in buckets.keys()
-        if bid.startswith("aw-watcher-window-") or bid.startswith("aw-watcher-web-")
+        if bid.startswith("aw-watcher-web")
     ]
 
     if not bid_window or not bid_afk:
-        return {"error": "Missing buckets"}
+        missing = []
+        if not bid_window:
+            missing.append(WINDOW_BUCKET_PREFIX)
+        if not bid_afk:
+            missing.append(AFK_BUCKET_PREFIX)
+        return {"error": f"Missing buckets: {', '.join(missing)}"}
 
     params = DesktopQueryParams(
         bid_window=bid_window,
@@ -279,6 +304,7 @@ def build_timeline_from_summary(
     if not result:
         return []
 
+    target_tz = _summary_timezone(summary)
     events = result.get("events", [])
     events = list(sorted(events, key=lambda e: e.get("timestamp", "")))
 
@@ -288,11 +314,12 @@ def build_timeline_from_summary(
         if not start_ts:
             continue
         duration_sec = _to_seconds(ev.get("duration"))
-        end_ts = (_parse_timestamp(start_ts) + timedelta(seconds=duration_sec)).isoformat()
+        start_dt = _convert_to_timezone(_parse_timestamp(start_ts), target_tz)
+        end_ts = (start_dt + timedelta(seconds=duration_sec)).isoformat()
         data = ev.get("data", {})
         items.append(
             {
-                "start": start_ts,
+                "start": start_dt.isoformat(),
                 "end": end_ts,
                 "app": data.get("app", "unknown"),
                 "display_name": _resolve_display_name(
@@ -528,13 +555,14 @@ def _empty_input_summary() -> Dict[str, object]:
 
 def _build_window_ranges(summary: Dict[str, object]) -> List[Dict[str, object]]:
     window_events = summary.get("result", {}).get("events", []) if isinstance(summary, dict) else []
+    target_tz = _summary_timezone(summary)
     activity_lookup = _activity_lookup(build_activity_from_summary(summary, limit=0))
     ranges: List[Dict[str, object]] = []
     for ev in sorted(window_events, key=lambda item: item.get("timestamp", "")):
         timestamp = ev.get("timestamp")
         if not timestamp:
             continue
-        start_ts = _parse_timestamp(timestamp)
+        start_ts = _convert_to_timezone(_parse_timestamp(timestamp), target_tz)
         duration_sec = _to_seconds(ev.get("duration"))
         if duration_sec <= 0:
             continue
@@ -570,6 +598,7 @@ def build_input_by_app(
         key_stats_day = _resolve_key_stats_day_payload(start, end)
         return _build_key_stats_by_app(key_stats_day, top_n=top_n) if key_stats_day else []
 
+    target_tz = _summary_timezone(summary) or _extract_timezone(start) or _extract_timezone(end)
     window_ranges = _build_window_ranges(summary)
     if not window_ranges:
         return []
@@ -587,14 +616,14 @@ def build_input_by_app(
     range_index = 0
 
     for ev in input_events:
-        timestamp = ev.timestamp
-        while range_index < len(window_ranges) and window_ranges[range_index]["end"] < timestamp:
+        event_timestamp = _convert_to_timezone(ev.timestamp, target_tz)
+        while range_index < len(window_ranges) and window_ranges[range_index]["end"] < event_timestamp:
             range_index += 1
         if range_index >= len(window_ranges):
             break
 
         active_range = window_ranges[range_index]
-        if not (active_range["start"] <= timestamp <= active_range["end"]):
+        if not (active_range["start"] <= event_timestamp <= active_range["end"]):
             continue
 
         values = _input_values_from_event(ev)
@@ -664,8 +693,10 @@ def build_input_trend(
     if not input_events:
         return buckets_out
 
+    target_tz = _extract_timezone(start) or _extract_timezone(end)
     for ev in input_events:
-        bucket = buckets_out[ev.timestamp.hour % bucket_count]
+        event_timestamp = _convert_to_timezone(ev.timestamp, target_tz)
+        bucket = buckets_out[event_timestamp.hour % bucket_count]
         values = _input_values_from_event(ev)
         for key, value in values.items():
             bucket[key] += value
@@ -712,10 +743,267 @@ def build_input_stats_full(
     }
 
 
+def _browser_result(summary: Dict[str, object]) -> Dict[str, object]:
+    result = summary.get("result", {}) if isinstance(summary, dict) else {}
+    browser = result.get("browser") if isinstance(result, dict) else {}
+    return browser if isinstance(browser, dict) else {}
+
+
+def _domain_from_url(url: object) -> str:
+    if not isinstance(url, str):
+        return ""
+    normalized = url.strip()
+    if not normalized:
+        return ""
+    parsed = urlparse(normalized if "://" in normalized else f"//{normalized}")
+    hostname = (parsed.hostname or parsed.netloc or "").lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    return hostname
+
+
+def _normalize_domain(value: object) -> str:
+    if not isinstance(value, str):
+        return "未知域名"
+    normalized = value.strip().lower()
+    if not normalized:
+        return "未知域名"
+    hostname = _domain_from_url(normalized)
+    if hostname:
+        return hostname
+    return normalized[4:] if normalized.startswith("www.") else normalized
+
+
+def _extract_browser_domain(data: Dict[str, object]) -> str:
+    domain = _normalize_domain(data.get("$domain") or data.get("domain") or "")
+    if domain != "未知域名":
+        return domain
+    return _normalize_domain(data.get("url") or "")
+
+
+def _projected_days(time_range: Dict[str, object], events: List[Dict[str, object]]) -> int:
+    return max(
+        1,
+        len({event["start"].date().isoformat() for event in events}) or (1 if time_range else 0),
+    )
+
+
+def _empty_browser_summary() -> Dict[str, object]:
+    return {
+        "available": False,
+        "totalDuration": 0.0,
+        "domainCount": 0,
+        "urlCount": 0,
+        "topDomain": None,
+    }
+
+
+def _empty_browser_trend(
+    summary: Optional[Dict[str, object]] = None,
+    bucket_count: int = 24,
+    min_duration: float = 2,
+    top_n_domains: int = 6,
+) -> Dict[str, object]:
+    time_range = summary.get("time_range", {}) if isinstance(summary, dict) else {}
+    return {
+        "meta": {
+            "rangeStart": time_range.get("start"),
+            "rangeEnd": time_range.get("end"),
+            "days": 1 if time_range else 0,
+            "projectedToSingleDay": True,
+            "minDuration": min_duration,
+            "topDomainsLimit": top_n_domains,
+        },
+        "colorMap": {},
+        "activeHour": None,
+        "hourlyBars": [
+            {"hour": hour, "total": 0.0, "segments": []}
+            for hour in range(bucket_count)
+        ],
+    }
+
+
+def _build_browser_url_counts(summary: Dict[str, object]) -> Dict[str, int]:
+    counts: Dict[str, int] = defaultdict(int)
+    for event in _browser_result(summary).get("urls", []) or []:
+        data = event.get("data", {}) if isinstance(event, dict) else {}
+        domain = _extract_browser_domain(data)
+        counts[domain] += 1
+    return counts
+
+
+def build_browser_by_domain(
+    summary: Dict[str, object], limit: int = 12
+) -> List[Dict[str, object]]:
+    browser = _browser_result(summary)
+    total_duration = _to_seconds(browser.get("duration", 0))
+    url_counts = _build_browser_url_counts(summary)
+
+    items: List[Dict[str, object]] = []
+    for event in browser.get("domains", []) or []:
+        data = event.get("data", {}) if isinstance(event, dict) else {}
+        domain = _extract_browser_domain(data)
+        duration = _to_seconds(event.get("duration", 0))
+        if duration <= 0:
+            continue
+        items.append(
+            {
+                "domain": domain,
+                "duration": duration,
+                "share": duration / total_duration if total_duration > 0 else 0.0,
+                "urlCount": int(url_counts.get(domain, 0)),
+            }
+        )
+
+    items.sort(key=lambda item: (-item["duration"], item["domain"]))
+    return items[:limit] if limit > 0 else items
+
+
+def build_browser_summary(
+    summary: Dict[str, object], items: Optional[List[Dict[str, object]]] = None
+) -> Dict[str, object]:
+    browser = _browser_result(summary)
+    all_items = items if items is not None else build_browser_by_domain(summary, limit=0)
+    total_duration = _to_seconds(browser.get("duration", 0)) or sum(
+        item.get("duration", 0) for item in all_items
+    )
+    url_count = len(browser.get("urls", []) or [])
+    top_domain = all_items[0] if all_items else None
+
+    if total_duration <= 0 or not all_items:
+        return _empty_browser_summary()
+
+    return {
+        "available": True,
+        "totalDuration": total_duration,
+        "domainCount": len(all_items),
+        "urlCount": url_count,
+        "topDomain": (
+            {
+                "domain": top_domain["domain"],
+                "duration": top_domain["duration"],
+                "share": top_domain.get("share", 0.0),
+            }
+            if top_domain
+            else None
+        ),
+    }
+
+
+def _iter_browser_events(
+    summary: Dict[str, object], min_duration: float = 2
+) -> List[Dict[str, object]]:
+    browser = _browser_result(summary)
+    target_tz = _summary_timezone(summary)
+    browser_events: List[Dict[str, object]] = []
+
+    for event in browser.get("events", []) or []:
+        timestamp = event.get("timestamp")
+        if not timestamp:
+            continue
+
+        duration = _to_seconds(event.get("duration", 0))
+        if duration <= min_duration:
+            continue
+
+        data = event.get("data", {}) if isinstance(event, dict) else {}
+        start = _convert_to_timezone(_parse_timestamp(timestamp), target_tz)
+        browser_events.append(
+            {
+                "start": start,
+                "end": start + timedelta(seconds=duration),
+                "duration": duration,
+                "domain": _extract_browser_domain(data),
+                "url": data.get("url", "") or "",
+            }
+        )
+
+    return sorted(browser_events, key=lambda item: item["start"])
+
+
+def build_browser_trend(
+    summary: Dict[str, object], min_duration: float = 2, top_n_domains: int = 6
+) -> Dict[str, object]:
+    time_range = summary.get("time_range", {}) if isinstance(summary, dict) else {}
+    browser_events = _iter_browser_events(summary, min_duration=min_duration)
+    if not browser_events:
+        return _empty_browser_trend(
+            summary,
+            min_duration=min_duration,
+            top_n_domains=top_n_domains,
+        )
+
+    slices = [
+        sliced
+        for event in browser_events
+        for sliced in _slice_event_into_hours(event)
+        if sliced.get("slice_duration", 0) > 0
+    ]
+
+    domain_totals: Dict[str, float] = defaultdict(float)
+    for sliced in slices:
+        domain_totals[sliced["domain"]] += sliced["slice_duration"]
+
+    top_domains = [
+        domain
+        for domain, _ in sorted(domain_totals.items(), key=lambda item: (-item[1], item[0]))[:top_n_domains]
+    ]
+    segment_keys = top_domains + (["其他"] if len(domain_totals) > len(top_domains) else [])
+    color_map = _build_stable_color_mapping(segment_keys)
+
+    hourly_by_domain: Dict[int, Dict[str, float]] = {hour: defaultdict(float) for hour in range(24)}
+    hourly_totals: Dict[int, float] = {hour: 0.0 for hour in range(24)}
+    for sliced in slices:
+        hour = sliced["hour"]
+        domain = sliced["domain"] if sliced["domain"] in top_domains else "其他"
+        duration = sliced["slice_duration"]
+        hourly_by_domain[hour][domain] += duration
+        hourly_totals[hour] += duration
+
+    hourly_bars = []
+    for hour in range(24):
+        segments = [
+            {
+                "domain": domain,
+                "duration": duration,
+                "color": color_map.get(domain),
+            }
+            for domain, duration in sorted(
+                hourly_by_domain[hour].items(), key=lambda item: (-item[1], item[0])
+            )
+        ]
+        hourly_bars.append(
+            {
+                "hour": hour,
+                "total": hourly_totals[hour],
+                "segments": segments,
+            }
+        )
+
+    active_hour = None
+    if any(item["total"] > 0 for item in hourly_bars):
+        active_hour = max(hourly_bars, key=lambda item: (item["total"], -item["hour"]))["hour"]
+
+    return {
+        "meta": {
+            "rangeStart": time_range.get("start"),
+            "rangeEnd": time_range.get("end"),
+            "days": _projected_days(time_range, browser_events),
+            "projectedToSingleDay": True,
+            "minDuration": min_duration,
+            "topDomainsLimit": top_n_domains,
+        },
+        "colorMap": color_map,
+        "activeHour": active_hour,
+        "hourlyBars": hourly_bars,
+    }
+
+
 def _iter_visual_events(
     summary: Dict[str, object], min_duration: float = 2
 ) -> List[Dict[str, object]]:
     result = summary.get("result", {}) if isinstance(summary, dict) else {}
+    target_tz = _summary_timezone(summary)
     events = result.get("events", [])
 
     visual_events: List[Dict[str, object]] = []
@@ -728,7 +1016,7 @@ def _iter_visual_events(
         if duration <= min_duration:
             continue
 
-        start = _parse_timestamp(timestamp)
+        start = _convert_to_timezone(_parse_timestamp(timestamp), target_tz)
         end = start + timedelta(seconds=duration)
         data = ev.get("data", {})
         visual_events.append(
@@ -973,6 +1261,88 @@ def build_heatmap_data(
     ).get("heatmap", {"apps": []})
 
 
+def _build_activity_section(
+    summary: Dict[str, object],
+    start: datetime,
+    end: datetime,
+    activity_limit: int,
+    timeline_limit: int,
+    client: ActivityWatchClient,
+    input_events,
+) -> Dict[str, object]:
+    return {
+        "activity": build_activity_with_input(
+            summary,
+            start=start,
+            end=end,
+            limit=activity_limit,
+            client=client,
+            events=input_events,
+        ),
+        "timeline": build_timeline_from_summary(summary, limit=timeline_limit),
+    }
+
+
+def _build_input_section(
+    summary: Dict[str, object],
+    start: datetime,
+    end: datetime,
+    top_n_apps: int,
+    client: ActivityWatchClient,
+    input_events,
+) -> Dict[str, object]:
+    input_by_app = build_input_by_app(
+        summary=summary,
+        start=start,
+        end=end,
+        top_n=top_n_apps,
+        client=client,
+        events=input_events,
+    )
+    return {
+        "inputTopApps": [
+            {
+                "app": item["app"],
+                "display_name": item.get("display_name", item["app"]),
+                "presses": item["presses"],
+                "clicks": item["clicks"],
+                "scroll": item["scroll"],
+            }
+            for item in input_by_app
+        ],
+        "inputSummary": build_input_stats_full(
+            start=start,
+            end=end,
+            client=client,
+            events=input_events,
+        ),
+        "inputTrend": build_input_trend(
+            start=start,
+            end=end,
+            client=client,
+            events=input_events,
+        ),
+        "inputByApp": input_by_app,
+    }
+
+
+def _build_browser_section(
+    summary: Dict[str, object], activity_limit: int, top_n_apps: int
+) -> Dict[str, object]:
+    browser_by_domain = build_browser_by_domain(summary, limit=activity_limit)
+    return {
+        "browserSummary": build_browser_summary(summary, items=browser_by_domain),
+        "browserByDomain": browser_by_domain,
+        "browserTrend": build_browser_trend(summary, top_n_domains=max(top_n_apps, 1)),
+    }
+
+
+def _build_visualization_section(summary: Dict[str, object]) -> Dict[str, object]:
+    return {
+        "visualization": build_visualization_data(summary),
+    }
+
+
 def build_dashboard_payload(
     summary: Dict[str, object],
     start: datetime,
@@ -987,41 +1357,27 @@ def build_dashboard_payload(
 
     return {
         "summary": summary,
-        "activity": build_activity_with_input(
-            summary,
-            start=start,
-            end=end,
-            limit=activity_limit,
-            client=client,
-            events=input_events,
-        ),
-        "timeline": build_timeline_from_summary(summary, limit=timeline_limit),
-        "inputTopApps": build_input_stats_by_top_apps(
+        **_build_activity_section(
             summary=summary,
             start=start,
             end=end,
-            top_n=top_n_apps,
+            activity_limit=activity_limit,
+            timeline_limit=timeline_limit,
             client=client,
+            input_events=input_events,
         ),
-        "inputSummary": build_input_stats_full(
-            start=start,
-            end=end,
-            client=client,
-            events=input_events,
-        ),
-        "inputTrend": build_input_trend(
-            start=start,
-            end=end,
-            client=client,
-            events=input_events,
-        ),
-        "inputByApp": build_input_by_app(
+        **_build_input_section(
             summary=summary,
             start=start,
             end=end,
-            top_n=top_n_apps,
+            top_n_apps=top_n_apps,
             client=client,
-            events=input_events,
+            input_events=input_events,
         ),
-        "visualization": build_visualization_data(summary),
+        **_build_browser_section(
+            summary=summary,
+            activity_limit=activity_limit,
+            top_n_apps=top_n_apps,
+        ),
+        **_build_visualization_section(summary),
     }

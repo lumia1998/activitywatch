@@ -199,6 +199,34 @@ class Module:
         return self._process.returncode is None
 
 
+def _existing_module_names(modules: Iterable["Module"]) -> Set[str]:
+    return {module.name for module in modules}
+
+
+def _filter_existing_autostart_modules(
+    modules: Iterable["Module"], autostart_modules: List[str]
+) -> List[str]:
+    existing_names = _existing_module_names(modules)
+    for name in autostart_modules:
+        if name not in existing_names:
+            logger.error("Module %s not found in any discoverable location", name)
+    return list({name for name in autostart_modules if name in existing_names})
+
+
+def _preferred_server_module(module_names: Iterable[str]) -> Optional[str]:
+    names = set(module_names)
+    if "aw-server-rust" in names:
+        return "aw-server-rust"
+    if "aw-server" in names:
+        return "aw-server"
+    return None
+
+
+def _start_priority(module: "Module") -> int:
+    order = {"bundled": 0, "system": 1, "source": 2}
+    return order[module.type]
+
+
 class Manager:
     def __init__(self, testing: bool = False) -> None:
         self.testing = testing
@@ -227,20 +255,11 @@ class Manager:
                 self.modules.append(m)
 
     def autostart(self, autostart_modules: List[str]) -> None:
-        # Filter only existing modules
-        existing_names = [m.name for m in self.modules]
-        for name in autostart_modules:
-            if name not in existing_names:
-                logger.error("Module %s not found in any discoverable location", name)
+        autostart_modules = _filter_existing_autostart_modules(self.modules, autostart_modules)
 
-        autostart_modules = [n for n in autostart_modules if n in existing_names]
-        autostart_modules = list(set(autostart_modules))
-
-        # Start server first
-        if "aw-server-rust" in autostart_modules:
-            self.start("aw-server-rust")
-        elif "aw-server" in autostart_modules:
-            self.start("aw-server")
+        server_module = _preferred_server_module(autostart_modules)
+        if server_module:
+            self.start(server_module)
 
         others = list(set(autostart_modules) - {"aw-server", "aw-server-rust"})
         for name in others:
@@ -253,9 +272,7 @@ class Manager:
             logger.error("Manager tried to start nonexistent module %s", module_name)
             return
 
-        # Sort by priority
-        order = {"bundled": 0, "system": 1, "source": 2}
-        candidates.sort(key=lambda m: order[m.type])
+        candidates.sort(key=_start_priority)
         candidates[0].start(self.testing)
 
     def stop_all(self) -> None:

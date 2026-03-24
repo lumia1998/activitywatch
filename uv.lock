@@ -156,7 +156,6 @@ dependencies = [
     { name = "aw-watcher-afk" },
     { name = "aw-watcher-input" },
     { name = "aw-watcher-window" },
-    { name = "pillow" },
     { name = "pywebview" },
     { name = "requests" },
 ]
@@ -169,7 +168,6 @@ requires-dist = [
     { name = "aw-watcher-afk", directory = "aw-watcher-afk" },
     { name = "aw-watcher-input", directory = "aw-watcher-input" },
     { name = "aw-watcher-window", directory = "aw-watcher-window" },
-    { name = "pillow", specifier = ">=10.4.0,<11.0.0" },
     { name = "pywebview", specifier = ">=5.1,<6.0" },
     { name = "requests", specifier = ">=2.32.3,<3.0.0" },
 ]

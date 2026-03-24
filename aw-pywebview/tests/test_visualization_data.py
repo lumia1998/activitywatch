@@ -1,4 +1,5 @@
 import sys
+import types
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,15 @@ for rel in ["aw-client", "aw-core", "aw-server", "aw-pywebview"]:
     path = str(ROOT / rel)
     if path not in sys.path:
         sys.path.insert(0, path)
+
+aw_client_module = types.ModuleType("aw_client")
+aw_client_module.ActivityWatchClient = object
+sys.modules.setdefault("aw_client", aw_client_module)
+
+queries_module = types.ModuleType("aw_client.queries")
+queries_module.DesktopQueryParams = lambda **kwargs: kwargs
+queries_module.fullDesktopQuery = lambda params: params
+sys.modules.setdefault("aw_client.queries", queries_module)
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "aw_pywebview" / "data.py"
 SPEC = spec_from_file_location("aw_pywebview_data", MODULE_PATH)
@@ -134,6 +144,30 @@ def test_build_visualization_data_splits_across_hours_and_filters_short_events()
     assert heatmap["Browser"]["hours"][10] == 600
     assert all(value == 0 for idx, value in enumerate(heatmap["Browser"]["hours"]) if idx != 10)
 
+
+
+
+
+def test_build_visualization_data_projects_utc_event_hours_into_summary_timezone():
+    summary = _summary(
+        [
+            _event("2026-03-20T01:50:00+00:00", 1200, "Editor", ["work"], "Deep work"),
+            _event("2026-03-21T01:10:00+00:00", 1800, "Editor", ["work"], "Review"),
+        ]
+    )
+
+    data = build_visualization_data(summary, min_duration=2, top_n_apps=5)
+
+    hourly = {item["hour"]: item for item in data["hourlyBars"]}
+    assert hourly[9]["total"] == 2400
+    assert hourly[10]["total"] == 600
+
+    lanes = {lane["app"]: lane for lane in data["gantt"]["lanes"]}
+    editor_blocks = lanes["Editor"]["blocks"]
+    assert editor_blocks[0]["start"] == approx(9 + 10 / 60)
+    assert editor_blocks[0]["end"] == approx(9 + 40 / 60)
+    assert editor_blocks[1]["start"] == approx(9 + 50 / 60)
+    assert editor_blocks[1]["end"] == approx(10 + 10 / 60)
 
 
 def test_gantt_projection_keeps_same_named_blocks_from_different_days_separate():

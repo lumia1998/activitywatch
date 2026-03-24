@@ -1,4 +1,5 @@
 import sys
+import types
 from datetime import datetime
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -9,6 +10,15 @@ for rel in ["aw-client", "aw-core", "aw-server", "aw-pywebview"]:
     path = str(ROOT / rel)
     if path not in sys.path:
         sys.path.insert(0, path)
+
+aw_client_module = types.ModuleType("aw_client")
+aw_client_module.ActivityWatchClient = object
+sys.modules.setdefault("aw_client", aw_client_module)
+
+queries_module = types.ModuleType("aw_client.queries")
+queries_module.DesktopQueryParams = lambda **kwargs: kwargs
+queries_module.fullDesktopQuery = lambda params: params
+sys.modules.setdefault("aw_client.queries", queries_module)
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "aw_pywebview" / "data.py"
 SPEC = spec_from_file_location("aw_pywebview_data", MODULE_PATH)
@@ -22,6 +32,9 @@ build_input_stats_full = data_module.build_input_stats_full
 build_input_trend = data_module.build_input_trend
 build_input_by_app = data_module.build_input_by_app
 build_dashboard_payload = data_module.build_dashboard_payload
+build_browser_by_domain = data_module.build_browser_by_domain
+build_browser_summary = data_module.build_browser_summary
+build_browser_trend = data_module.build_browser_trend
 
 
 class FakeEvent:
@@ -63,6 +76,50 @@ def _summary():
                     },
                 ]
             },
+            "browser": {
+                "duration": 4800,
+                "domains": [
+                    {
+                        "duration": 3000,
+                        "data": {"$domain": "github.com"},
+                    },
+                    {
+                        "duration": 1800,
+                        "data": {"$domain": "bilibili.com"},
+                    },
+                ],
+                "urls": [
+                    {
+                        "duration": 1800,
+                        "data": {"url": "https://github.com/ActivityWatch/activitywatch"},
+                    },
+                    {
+                        "duration": 1200,
+                        "data": {"url": "https://github.com/ActivityWatch/aw-webui"},
+                    },
+                    {
+                        "duration": 1800,
+                        "data": {"url": "https://www.bilibili.com/video/BV1xx"},
+                    },
+                ],
+                "events": [
+                    {
+                        "timestamp": "2026-03-20T09:10:00+08:00",
+                        "duration": 1800,
+                        "data": {"$domain": "github.com", "url": "https://github.com/ActivityWatch/activitywatch"},
+                    },
+                    {
+                        "timestamp": "2026-03-20T10:15:00+08:00",
+                        "duration": 1200,
+                        "data": {"$domain": "github.com", "url": "https://github.com/ActivityWatch/aw-webui"},
+                    },
+                    {
+                        "timestamp": "2026-03-20T11:00:00+08:00",
+                        "duration": 1800,
+                        "data": {"$domain": "bilibili.com", "url": "https://www.bilibili.com/video/BV1xx"},
+                    },
+                ],
+            },
             "events": [
                 {
                     "timestamp": "2026-03-20T09:00:00+08:00",
@@ -77,6 +134,17 @@ def _summary():
             ]
         },
     }
+
+
+def _summary_without_browser_data():
+    summary = _summary()
+    summary["result"]["browser"] = {
+        "duration": 0,
+        "domains": [],
+        "urls": [],
+        "events": [],
+    }
+    return summary
 
 
 def test_build_activity_from_summary_prefers_display_name():
@@ -192,7 +260,30 @@ def test_build_input_trend_groups_metrics_by_hour():
     assert result[11] == {"hour": 11, "presses": 0, "clicks": 0, "scroll": 0, "moves": 0, "total": 0}
 
 
-def test_build_dashboard_payload_includes_full_input_sections():
+
+
+def test_build_input_trend_projects_utc_event_hours_into_requested_timezone():
+    client = FakeClient(
+        [
+            FakeEvent("2026-03-20T01:10:00+00:00", {"presses": 10, "clicks": 2, "scrollX": 0, "scrollY": 3, "deltaX": 4, "deltaY": 5}),
+            FakeEvent("2026-03-20T02:20:00+00:00", {"presses": 5, "clicks": 1, "scrollX": 0, "scrollY": 2, "deltaX": 1, "deltaY": 1}),
+        ]
+    )
+
+    result = build_input_trend(
+        datetime.fromisoformat("2026-03-20T09:00:00+08:00"),
+        datetime.fromisoformat("2026-03-20T12:00:00+08:00"),
+        client=client,
+    )
+
+    assert result[9] == {"hour": 9, "presses": 10, "clicks": 2, "scroll": 3, "moves": 9, "total": 15}
+    assert result[10] == {"hour": 10, "presses": 5, "clicks": 1, "scroll": 2, "moves": 2, "total": 8}
+    assert result[1] == {"hour": 1, "presses": 0, "clicks": 0, "scroll": 0, "moves": 0, "total": 0}
+
+
+
+
+def test_build_dashboard_payload_includes_full_input_and_browser_sections():
     client = FakeClient(
         [
             FakeEvent("2026-03-20T09:10:00+08:00", {"presses": 10, "clicks": 2, "scrollX": 0, "scrollY": 3, "deltaX": 4, "deltaY": 5}),
@@ -211,9 +302,135 @@ def test_build_dashboard_payload_includes_full_input_sections():
     assert payload["inputSummary"]["available"] is True
     assert payload["inputSummary"]["totals"]["presses"] == 10
     assert payload["inputTrend"][9]["total"] == 15
+    assert payload["browserSummary"]["available"] is True
+    assert payload["browserByDomain"][0]["domain"] == "github.com"
+    assert payload["browserTrend"]["hourlyBars"][9]["total"] == 1800.0
 
 
-def test_build_input_stats_prefers_activitywatch_bucket_over_keystats_fallback(monkeypatch):
+def test_build_browser_by_domain_aggregates_domain_duration_and_url_count():
+    result = build_browser_by_domain(_summary(), limit=10)
+
+    assert result == [
+        {"domain": "github.com", "duration": 3000.0, "share": 3000 / 4800, "urlCount": 2},
+        {"domain": "bilibili.com", "duration": 1800.0, "share": 1800 / 4800, "urlCount": 1},
+    ]
+
+
+
+
+def test_build_dashboard_payload_preserves_contract_keys_and_shapes():
+    client = FakeClient(
+        [
+            FakeEvent("2026-03-20T09:10:00+08:00", {"presses": 10, "clicks": 2, "scrollX": 0, "scrollY": 3, "deltaX": 4, "deltaY": 5}),
+        ]
+    )
+
+    payload = build_dashboard_payload(
+        summary=_summary(),
+        start=datetime.fromisoformat("2026-03-20T09:00:00+08:00"),
+        end=datetime.fromisoformat("2026-03-20T12:00:00+08:00"),
+        client=client,
+    )
+
+    assert set(payload.keys()) == {
+        "summary",
+        "activity",
+        "timeline",
+        "inputTopApps",
+        "inputSummary",
+        "inputTrend",
+        "inputByApp",
+        "browserSummary",
+        "browserByDomain",
+        "browserTrend",
+        "visualization",
+    }
+    assert isinstance(payload["activity"], list)
+    assert isinstance(payload["timeline"], list)
+    assert isinstance(payload["inputTopApps"], list)
+    assert isinstance(payload["inputTrend"], list)
+    assert isinstance(payload["inputByApp"], list)
+    assert isinstance(payload["browserByDomain"], list)
+    assert isinstance(payload["browserTrend"], dict)
+    assert isinstance(payload["visualization"], dict)
+
+
+def test_build_browser_summary_returns_top_domain_and_totals():
+    summary = build_browser_summary(_summary())
+
+    assert summary["available"] is True
+    assert summary["totalDuration"] == 4800
+    assert summary["domainCount"] == 2
+    assert summary["urlCount"] == 3
+    assert summary["topDomain"] == {
+        "domain": "github.com",
+        "duration": 3000.0,
+        "share": 3000 / 4800,
+    }
+    trend = build_browser_trend(_summary(), top_n_domains=4)
+
+    assert trend["activeHour"] == 9
+    assert trend["meta"]["days"] == 1
+    assert trend["hourlyBars"][9] == {
+        "hour": 9,
+        "total": 1800.0,
+        "segments": [
+            {"domain": "github.com", "duration": 1800.0, "color": trend["colorMap"]["github.com"]},
+        ],
+    }
+    assert trend["hourlyBars"][10] == {
+        "hour": 10,
+        "total": 1200.0,
+        "segments": [
+            {"domain": "github.com", "duration": 1200.0, "color": trend["colorMap"]["github.com"]},
+        ],
+    }
+    assert trend["hourlyBars"][11] == {
+        "hour": 11,
+        "total": 1800.0,
+        "segments": [
+            {"domain": "bilibili.com", "duration": 1800.0, "color": trend["colorMap"]["bilibili.com"]},
+        ],
+    }
+
+
+def test_build_browser_trend_projects_utc_hours_into_summary_timezone():
+    summary = _summary()
+    summary["result"]["browser"]["events"] = [
+        {
+            "timestamp": "2026-03-20T01:10:00+00:00",
+            "duration": 1800,
+            "data": {"$domain": "github.com", "url": "https://github.com/ActivityWatch/activitywatch"},
+        },
+        {
+            "timestamp": "2026-03-20T03:00:00+00:00",
+            "duration": 1800,
+            "data": {"$domain": "bilibili.com", "url": "https://www.bilibili.com/video/BV1xx"},
+        },
+    ]
+
+    trend = build_browser_trend(summary, top_n_domains=4)
+
+    assert trend["hourlyBars"][9]["total"] == 1800.0
+    assert trend["hourlyBars"][11]["total"] == 1800.0
+    assert trend["hourlyBars"][1]["total"] == 0.0
+
+
+def test_build_browser_helpers_return_empty_state_without_browser_data(monkeypatch):
+    summary = _summary_without_browser_data()
+
+    assert build_browser_by_domain(summary) == []
+    assert build_browser_summary(summary) == {
+        "available": False,
+        "totalDuration": 0.0,
+        "domainCount": 0,
+        "urlCount": 0,
+        "topDomain": None,
+    }
+    trend = build_browser_trend(summary)
+    assert trend["activeHour"] is None
+    assert all(item == {"hour": item["hour"], "total": 0.0, "segments": []} for item in trend["hourlyBars"])
+
     client = FakeClient(
         [
             FakeEvent("2026-03-23T09:10:00+08:00", {"presses": 7, "clicks": 2, "scrollX": 1, "scrollY": 3, "deltaX": 4, "deltaY": 6}),

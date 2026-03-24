@@ -1,9 +1,8 @@
 import logging
 import os
 import signal
-import threading
 from pathlib import Path
-from typing import List
+from typing import Callable, List, Tuple
 
 import webview
 from aw_core.config import load_config_toml
@@ -11,7 +10,6 @@ from aw_core.log import setup_logging
 
 from .api import AppApi
 from .manager import Manager
-from .scheduler import run_report_scheduler_forever
 from .server_info import get_root_url, wait_for_server
 
 logger = logging.getLogger(__name__)
@@ -23,19 +21,6 @@ autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-wat
 window_width = 1200
 window_height = 800
 server_start_timeout = 20
-
-[aw-pywebview.report]
-enabled = false
-# 24 小时制
-hour = 0
-minute = 0
-# 统计近 N 天
-days = 1
-# daily_24h: 昨天 00:00-24:00
-# today_so_far: 今天 00:00-现在
-mode = "daily_24h"
-# 输出目录，留空则使用默认 data 目录
-output_dir = ""
 """.strip()
 
 
@@ -49,46 +34,42 @@ def _start_modules(manager: Manager, autostart_modules: List[str]) -> None:
     manager.autostart(autostart_modules)
 
 
+def _wait_until_server_ready(settings: dict) -> str:
+    url = get_root_url(testing=False)
+    timeout = int(settings.get("server_start_timeout", 20))
+    if not wait_for_server(url, timeout=timeout):
+        raise RuntimeError("aw-server 启动超时")
+    logger.info("Server ready at %s", url)
+    return url
+
+
+def _window_size(settings: dict) -> Tuple[int, int]:
+    return int(settings.get("window_width", 1200)), int(settings.get("window_height", 800))
+
+
 def _get_ui_path() -> str:
     ui_dir = Path(__file__).parent / "ui"
     return (ui_dir / "index.html").resolve().as_uri()
 
 
-def main() -> None:
-    settings = _load_settings()
-    setup_logging("aw-pywebview", verbose=True, log_file=True)
-
-    manager = Manager()
-    autostart_modules = settings["autostart_modules"]
-    _start_modules(manager, autostart_modules)
-
-    url = get_root_url(testing=False)
-    timeout = int(settings.get("server_start_timeout", 20))
-    if not wait_for_server(url, timeout=timeout):
-        raise RuntimeError("aw-server 启动超时")
-
-    logger.info("Server ready at %s", url)
-
-    scheduler_thread = threading.Thread(
-        target=run_report_scheduler_forever, daemon=True
-    )
-    scheduler_thread.start()
-
-    width = int(settings.get("window_width", 1200))
-    height = int(settings.get("window_height", 800))
-
+def _build_shutdown_handler(manager: Manager) -> Callable[..., None]:
     def _shutdown(*_args):
         logger.info("Shutdown requested")
         manager.stop_all()
         os._exit(0)
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    return _shutdown
 
+
+def _register_signal_handlers(shutdown_handler: Callable[..., None]) -> None:
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+
+
+def _create_window(width: int, height: int):
     ui_url = _get_ui_path()
     api = AppApi()
-
-    window = webview.create_window(
+    return webview.create_window(
         "ActivityWatch",
         ui_url,
         width=width,
@@ -96,8 +77,23 @@ def main() -> None:
         js_api=api,
     )
 
+
+def main() -> None:
+    settings = _load_settings()
+    setup_logging("aw-pywebview", verbose=True, log_file=True)
+
+    manager = Manager()
+    _start_modules(manager, settings["autostart_modules"])
+    _wait_until_server_ready(settings)
+
+    width, height = _window_size(settings)
+    shutdown_handler = _build_shutdown_handler(manager)
+    _register_signal_handlers(shutdown_handler)
+
+    window = _create_window(width, height)
+
     def _on_closed():
-        _shutdown()
+        shutdown_handler()
 
     window.events.closed += _on_closed
     webview.start(debug=False)

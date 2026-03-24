@@ -7,13 +7,11 @@ license = "MPL-2.0"
 
 [tool.poetry.scripts]
 aw-pywebview = "aw_pywebview:main"
-aw-pywebview-report = "aw_pywebview.cli:main"
 
 [tool.poetry.dependencies]
 python = "^3.8"
 pywebview = "^5.1"
 requests = "^2.32.3"
-Pillow = "^10.4.0"
 aw-core = {path = "../aw-core"}
 aw-client = {path = "../aw-client"}
 aw-server = {path = "../aw-server"}

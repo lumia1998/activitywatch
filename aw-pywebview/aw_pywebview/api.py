@@ -1,6 +1,5 @@
-import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from aw_client import ActivityWatchClient
 
@@ -17,12 +16,40 @@ from .data import (
     build_visualization_data,
     get_consistent_color_mapping,
 )
-from .report import generate_report_image
 
 
 def _start_of_day() -> datetime:
     now = datetime.now().astimezone()
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _empty_browser_summary() -> Dict[str, object]:
+    return {
+        "available": False,
+        "totalDuration": 0.0,
+        "domainCount": 0,
+        "urlCount": 0,
+        "topDomain": None,
+    }
+
+
+def _empty_browser_trend() -> Dict[str, object]:
+    return {
+        "meta": {
+            "rangeStart": None,
+            "rangeEnd": None,
+            "days": 0,
+            "projectedToSingleDay": True,
+            "minDuration": 2,
+            "topDomainsLimit": 0,
+        },
+        "colorMap": {},
+        "activeHour": None,
+        "hourlyBars": [
+            {"hour": hour, "total": 0.0, "segments": []}
+            for hour in range(24)
+        ],
+    }
 
 
 def _error_response(code: str, message: str, details: str = "") -> Dict[str, object]:
@@ -37,6 +64,12 @@ def _error_response(code: str, message: str, details: str = "") -> Dict[str, obj
         "activity": [],
         "timeline": [],
         "inputTopApps": [],
+        "inputSummary": None,
+        "inputTrend": [],
+        "inputByApp": [],
+        "browserSummary": _empty_browser_summary(),
+        "browserByDomain": [],
+        "browserTrend": _empty_browser_trend(),
         "visualization": None,
         "warnings": [],
     }
@@ -56,21 +89,6 @@ class AppApi:
         start = _start_of_day()
         end = datetime.now().astimezone()
         return build_summary_range(start, end, client=self._get_client())
-
-    def generate_report_today(self) -> Optional[str]:
-        """Generate a report for today and save it to the analytics folder."""
-        summary = self.get_summary_today()
-        if "error" in summary:
-            return None
-
-        # Get project root (relative to this file: aw_pywebview/api.py -> aw-pywebview)
-        # dirname(__file__) is aw_pywebview/
-        # .. is aw-pywebview/
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        output_dir = os.path.join(project_root, "analytics")
-
-        path = generate_report_image(summary, output_dir)
-        return path
 
     def get_summary(self, days: int = 1) -> Dict[str, object]:
         return build_summary(days=days, client=self._get_client())

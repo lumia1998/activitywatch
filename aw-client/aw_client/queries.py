@@ -207,6 +207,10 @@ browser_appnames = {
         "Google-chrome-unstable",
         # Brave (should this be merged with the brave entry?)
         "Brave-browser",
+        # Cent Browser
+        "CentBrowser",
+        "centbrowser",
+        "centbrowser.exe",
     ],
     "firefox": [
         "Firefox",
@@ -261,12 +265,12 @@ def fullDesktopQuery(
 
     # Add browser-related query parts if browser buckets exist
     if params.bid_browsers:
-        query += """
+        query += f"""
         browser_events = split_url_events(browser_events);
-        browser_urls = merge_events_by_keys(browser_events, ["url"]);
+        browser_urls = merge_events_by_keys(browser_events, [\"url\"]);
         browser_urls = sort_by_duration(browser_urls);
         browser_urls = limit_events(browser_urls, {default_limit});
-        browser_domains = merge_events_by_keys(browser_events, ["$domain"]);
+        browser_domains = merge_events_by_keys(browser_events, [\"$domain\"]);
         browser_domains = sort_by_duration(browser_domains);
         browser_domains = limit_events(browser_domains, {default_limit});
         browser_duration = sum_durations(browser_events);
@@ -291,6 +295,7 @@ def fullDesktopQuery(
                 "duration": duration
             },
             "browser": {
+                "events": browser_events,
                 "domains": browser_domains,
                 "urls": browser_urls,
                 "duration": browser_duration
