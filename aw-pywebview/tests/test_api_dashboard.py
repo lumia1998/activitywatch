@@ -1,6 +1,6 @@
 import sys
 import types
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -73,6 +73,16 @@ def test_get_dashboard_data_returns_unified_payload(monkeypatch):
         calls["payload"] = kwargs
         return payload
 
+    fixed_now = datetime(2026, 3, 24, 14, 30, tzinfo=timezone(timedelta(hours=8)))
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now.replace(tzinfo=None)
+            return fixed_now.astimezone(tz)
+
+    monkeypatch.setattr(api_module, "datetime", FixedDatetime)
     monkeypatch.setattr(api_module, "build_summary_range", fake_build_summary_range)
     monkeypatch.setattr(api_module, "build_dashboard_payload", fake_build_dashboard_payload)
 
@@ -90,9 +100,8 @@ def test_get_dashboard_data_returns_unified_payload(monkeypatch):
     assert calls["payload"]["activity_limit"] == 7
     assert calls["payload"]["timeline_limit"] == 8
     assert calls["payload"]["top_n_apps"] == 9
-    assert isinstance(calls["payload"]["start"], datetime)
-    assert isinstance(calls["payload"]["end"], datetime)
-    assert calls["payload"]["end"] - calls["payload"]["start"] >= timedelta(days=2, hours=23)
+    assert calls["payload"]["start"] == datetime(2026, 3, 22, 0, 0, tzinfo=timezone(timedelta(hours=8)))
+    assert calls["payload"]["end"] == fixed_now
 
 
 def test_get_dashboard_data_returns_missing_bucket_error(monkeypatch):
@@ -131,6 +140,130 @@ def test_get_dashboard_data_returns_query_failed_when_payload_build_crashes(monk
     assert result["ok"] is False
     assert result["error"]["code"] == "query_failed"
     assert "boom" in result["error"]["details"]
+
+
+def test_get_detected_apps_delegates_to_data_module(monkeypatch):
+    api = TrackingApi()
+
+    monkeypatch.setattr(api_module, "get_detected_apps", lambda limit=50: [{"app": "python", "display_name": "Visual Studio Code"}, {"app": "msedgewebview2", "display_name": "Microsoft Edge WebView2"}])
+
+    result = api.get_detected_apps(limit=10)
+
+    assert result == [
+        {"app": "python", "display_name": "Visual Studio Code"},
+        {"app": "msedgewebview2", "display_name": "Microsoft Edge WebView2"},
+    ]
+
+
+
+def test_app_api_save_settings_reapplies_rules(monkeypatch):
+    api = TrackingApi()
+    applied = []
+
+    monkeypatch.setattr(api_module, "save_settings_payload", lambda excluded_apps=None, app_aliases=None: {
+        "excluded_apps": ["DESKTOPMGR64", "wezterm*"],
+        "app_aliases": {"wezterm-gui": "wezterm"},
+    })
+    monkeypatch.setattr(api_module, "configure_app_rules", lambda excluded_apps=None, app_aliases=None: applied.append((excluded_apps, app_aliases)))
+
+    result = api.save_settings(excluded_apps=["DESKTOPMGR64"], app_aliases={"wezterm-gui": "wezterm"})
+
+    assert result == {
+        "excluded_apps": ["DESKTOPMGR64", "wezterm*"],
+        "app_aliases": {"wezterm-gui": "wezterm"},
+    }
+    assert applied[-1] == (["DESKTOPMGR64", "wezterm*"], {"wezterm-gui": "wezterm"})
+    assert api._settings["excluded_apps"] == ["DESKTOPMGR64", "wezterm*"]
+    assert api._settings["app_aliases"] == {"wezterm-gui": "wezterm"}
+
+
+
+def test_tray_controller_toggle_pause_updates_manager_and_menu_text():
+    package = types.ModuleType("aw_pywebview")
+    package.__path__ = [str(PACKAGE_ROOT)]
+    sys.modules["aw_pywebview"] = package
+    sys.modules.setdefault("webview", types.SimpleNamespace())
+    sys.modules.setdefault("aw_core.log", types.SimpleNamespace(setup_logging=lambda *args, **kwargs: None))
+
+    manager_stub_module = types.ModuleType("aw_pywebview.manager")
+    manager_stub_module.Manager = object
+    sys.modules["aw_pywebview.manager"] = manager_stub_module
+
+    server_info_stub = types.ModuleType("aw_pywebview.server_info")
+    server_info_stub.get_root_url = lambda testing=False: "http://127.0.0.1:5600"
+    server_info_stub.wait_for_server = lambda url, timeout=20: True
+    sys.modules["aw_pywebview.server_info"] = server_info_stub
+
+    settings_stub = types.ModuleType("aw_pywebview.settings")
+    settings_stub.DEFAULT_CONFIG = ""
+    settings_stub.load_settings = lambda: {}
+    sys.modules["aw_pywebview.settings"] = settings_stub
+
+    main_spec = spec_from_file_location("aw_pywebview.main", PACKAGE_ROOT / "main.py")
+    main_module = module_from_spec(main_spec)
+    sys.modules["aw_pywebview.main"] = main_module
+    assert main_spec.loader is not None
+    main_spec.loader.exec_module(main_module)
+
+    manager = types.SimpleNamespace()
+    calls = []
+    manager.pause_tracking = lambda: calls.append("pause")
+    manager.resume_tracking = lambda: calls.append("resume")
+
+    tray = main_module.TrayController(types.SimpleNamespace(), lambda *_args: None, manager)
+    tray._toggle_pause_item = types.SimpleNamespace(Text="")
+
+    tray.toggle_pause()
+    assert calls == ["pause"]
+    assert tray._toggle_pause_item.Text == "恢复统计"
+
+    tray.toggle_pause()
+    assert calls == ["pause", "resume"]
+    assert tray._toggle_pause_item.Text == "暂停统计"
+
+
+
+def test_tray_controller_open_settings_runs_js_bridge():
+    package = types.ModuleType("aw_pywebview")
+    package.__path__ = [str(PACKAGE_ROOT)]
+    sys.modules["aw_pywebview"] = package
+    sys.modules.setdefault("webview", types.SimpleNamespace())
+    sys.modules.setdefault("aw_core.log", types.SimpleNamespace(setup_logging=lambda *args, **kwargs: None))
+
+    manager_stub_module = types.ModuleType("aw_pywebview.manager")
+    manager_stub_module.Manager = object
+    sys.modules["aw_pywebview.manager"] = manager_stub_module
+
+    server_info_stub = types.ModuleType("aw_pywebview.server_info")
+    server_info_stub.get_root_url = lambda testing=False: "http://127.0.0.1:5600"
+    server_info_stub.wait_for_server = lambda url, timeout=20: True
+    sys.modules["aw_pywebview.server_info"] = server_info_stub
+
+    settings_stub = types.ModuleType("aw_pywebview.settings")
+    settings_stub.DEFAULT_CONFIG = ""
+    settings_stub.load_settings = lambda: {}
+    sys.modules["aw_pywebview.settings"] = settings_stub
+
+    main_spec = spec_from_file_location("aw_pywebview.main", PACKAGE_ROOT / "main.py")
+    main_module = module_from_spec(main_spec)
+    sys.modules["aw_pywebview.main"] = main_module
+    assert main_spec.loader is not None
+    main_spec.loader.exec_module(main_module)
+
+    calls = []
+    native = types.SimpleNamespace(Activate=lambda: calls.append("activate"))
+    window = types.SimpleNamespace(
+        restore=lambda: calls.append("restore"),
+        show=lambda: calls.append("show"),
+        evaluate_js=lambda script: calls.append(script),
+        native=native,
+    )
+    tray = main_module.TrayController(window, lambda *_args: None, types.SimpleNamespace())
+
+    tray.open_settings()
+
+    assert calls[:3] == ["restore", "show", "activate"]
+    assert calls[3] == "window.AwPywebviewApp?.openSettingsFromTray?.(); true;"
 
 
 def test_error_response_preserves_dashboard_contract_shape():

@@ -23,6 +23,8 @@ log_level = os.environ.get("LOG_LEVEL")
 if log_level:
     logger.setLevel(logging.__getattribute__(log_level.upper()))
 
+MIN_STABLE_WINDOW_SECONDS = 3.0
+
 
 def kill_process(pid):
     logger.info("Killing process {}".format(pid))
@@ -38,6 +40,31 @@ def try_compile_title_regex(title):
     except re.error:
         logger.error(f"Invalid regex pattern: {title}")
         exit(1)
+
+
+def _window_identity(window):
+    if not isinstance(window, dict):
+        return None
+    return (
+        window.get("app") or "",
+        window.get("title") or "",
+        window.get("display_name") or "",
+        window.get("process_name") or "",
+    )
+
+
+def _next_stable_duration(current_window, previous_window, previous_duration, poll_time):
+    current_identity = _window_identity(current_window)
+    previous_identity = _window_identity(previous_window)
+    if not current_identity:
+        return 0.0
+    if current_identity != previous_identity:
+        return float(poll_time)
+    return float(previous_duration) + float(poll_time)
+
+
+def _should_emit_window(stable_duration, minimum_seconds=MIN_STABLE_WINDOW_SECONDS):
+    return float(stable_duration) >= float(minimum_seconds)
 
 
 def main():
@@ -112,6 +139,8 @@ def main():
 def heartbeat_loop(
     client, bucket_id, poll_time, strategy, exclude_title=False, exclude_titles=[]
 ):
+    previous_window = None
+    stable_duration = 0.0
     while True:
         if os.getppid() == 1:
             logger.info("window-watcher stopped because parent process died")
@@ -131,18 +160,14 @@ def heartbeat_loop(
         except Exception:
             # Non-fatal exceptions should be logged
             try:
-                # If stdout has been closed, this exception-print can cause (I think)
-                #   OSError: [Errno 5] Input/output error
-                # See: https://github.com/ActivityWatch/activitywatch/issues/756#issue-1296352264
-                #
-                # However, I'm unable to reproduce the OSError in a test (where I close stdout before logging),
-                # so I'm in uncharted waters here... but this solution should work.
                 logger.exception("Exception thrown while trying to get active window")
             except OSError:
                 break
 
         if current_window is None:
             logger.debug("Unable to fetch window, trying again on next poll")
+            previous_window = None
+            stable_duration = 0.0
         else:
             for pattern in exclude_titles:
                 if pattern.search(current_window["title"]):
@@ -151,14 +176,20 @@ def heartbeat_loop(
             if exclude_title:
                 current_window["title"] = "excluded"
 
-            now = datetime.now(timezone.utc)
-            current_window_event = Event(timestamp=now, data=current_window)
-
-            # Set pulsetime to 1 second more than the poll_time
-            # This since the loop takes more time than poll_time
-            # due to sleep(poll_time).
-            client.heartbeat(
-                bucket_id, current_window_event, pulsetime=poll_time + 1.0, queued=True
+            stable_duration = _next_stable_duration(
+                current_window=current_window,
+                previous_window=previous_window,
+                previous_duration=stable_duration,
+                poll_time=poll_time,
             )
+
+            if _should_emit_window(stable_duration):
+                now = datetime.now(timezone.utc)
+                current_window_event = Event(timestamp=now, data=current_window)
+                client.heartbeat(
+                    bucket_id, current_window_event, pulsetime=poll_time + 1.0, queued=True
+                )
+
+            previous_window = dict(current_window)
 
         sleep(poll_time)

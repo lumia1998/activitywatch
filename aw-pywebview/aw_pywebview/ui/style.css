@@ -101,6 +101,61 @@ body {
   color: var(--text);
 }
 
+.detected-app-row.editing {
+  grid-template-columns: 1fr;
+}
+
+.detected-app-inline-editor {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto minmax(180px, 1.2fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+
+.detected-app-inline-editor .settings-row-actions {
+  width: auto;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.detected-app-inline-editor .btn {
+  min-width: 72px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.detected-alias-app {
+  background: var(--surface-soft);
+}
+
+.detected-alias-name {
+  min-width: 0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.38);
+  backdrop-filter: blur(6px);
+  z-index: 1000;
+}
+
+.modal-backdrop[hidden] {
+  display: none !important;
+}
+
+.settings-modal {
+  width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  display: grid;
+  gap: 18px;
+}
+
 button,
 select,
 input {
@@ -227,27 +282,12 @@ input {
   justify-items: end;
 }
 
-.status-wrap {
-  display: inline-flex;
-  align-items: center;
+.toolbar-actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
   gap: 10px;
-}
-
-.status-label {
-  font-size: 12px;
-  color: var(--muted-soft);
-}
-
-.badge {
-  display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 12px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .toolbar {
@@ -1052,6 +1092,129 @@ input {
   background: linear-gradient(90deg, #c4b5fd, #a78bfa);
 }
 
+.icon-btn {
+  min-width: 42px;
+  height: 42px;
+  padding: 0 14px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(8px);
+}
+
+.modal-backdrop[hidden] {
+  display: none !important;
+}
+
+.settings-modal {
+  width: min(680px, 100%);
+  display: grid;
+  gap: 20px;
+}
+
+.settings-header,
+.settings-footer,
+.settings-form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-header {
+  align-items: flex-start;
+}
+
+.settings-section {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.settings-input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.settings-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: var(--app-summary-bg);
+  border: 1px solid var(--border);
+}
+
+.settings-chip-label {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.settings-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-list-rows {
+  grid-template-columns: 1fr;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--app-summary-bg);
+  border: 1px solid var(--border);
+}
+
+.settings-row-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.settings-row-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 @media (max-width: 1280px) {
   .input-summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1082,7 +1245,9 @@ input {
     justify-items: start;
   }
 
+  .toolbar-actions,
   .toolbar {
+    width: 100%;
     justify-content: flex-start;
   }
 
@@ -1147,6 +1312,18 @@ input {
 
   .theme-toggle {
     min-width: 0;
+  }
+
+  .settings-header,
+  .settings-footer,
+  .settings-form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-form-grid,
+  .settings-row {
+    grid-template-columns: 1fr;
   }
 
   .full-width-hourly-chart {

@@ -12,12 +12,18 @@ aw-pywebview = "aw_pywebview:main"
 python = "^3.8"
 pywebview = "^5.1"
 requests = "^2.32.3"
+pystray = "^0.19.5"
+Pillow = ">=10.4.0"
 aw-core = {path = "../aw-core"}
 aw-client = {path = "../aw-client"}
 aw-server = {path = "../aw-server"}
 aw-watcher-afk = {path = "../aw-watcher-afk"}
 aw-watcher-window = {path = "../aw-watcher-window"}
 aw-watcher-input = {path = "../aw-watcher-input"}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pytest-cov = "*"
 
 [build-system]
 requires = ["poetry-core"]

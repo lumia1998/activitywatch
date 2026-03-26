@@ -25,7 +25,6 @@ function syncXAxisTickLabel(tick, hour) {
   return tick;
 }
 
-const statusEl = document.getElementById('status');
 const activeDurationEl = document.getElementById('activeDuration');
 const appCountEl = document.getElementById('appCount');
 const avgSwitchRateEl = document.getElementById('avgSwitchRate');
@@ -50,8 +49,18 @@ const browserTrendYAxisEl = document.getElementById('browserTrendYAxis');
 const browserTrendXAxisEl = document.getElementById('browserTrendXAxis');
 const browserTrendTooltipEl = document.getElementById('browserTrendTooltip');
 const browserTrendHintEl = document.getElementById('browserTrendHint');
-const refreshBtn = document.getElementById('refreshBtn');
-const rangeSelect = document.getElementById('rangeSelect');
+const settingsModalEl = document.getElementById('settingsModal');
+const settingsCloseBtn = document.getElementById('settingsCloseBtn');
+const excludedAppInputEl = document.getElementById('excludedAppInput');
+const addExcludedAppBtn = document.getElementById('addExcludedAppBtn');
+const excludedAppsListEl = document.getElementById('excludedAppsList');
+const aliasEditorSectionEl = document.getElementById('aliasEditorSection');
+const aliasAppInputEl = document.getElementById('aliasAppInput');
+const aliasNameInputEl = document.getElementById('aliasNameInput');
+const addAliasBtn = document.getElementById('addAliasBtn');
+const aliasListEl = document.getElementById('aliasList');
+const detectedAppsListEl = document.getElementById('detectedAppsList');
+const settingsSaveBtn = document.getElementById('settingsSaveBtn');
 const themeToggleBtn = document.getElementById('themeToggle');
 const dashboardTabEls = Array.from(document.querySelectorAll('.dashboard-tab'));
 const dashboardPanelEls = Array.from(document.querySelectorAll('.dashboard-panel'));
@@ -67,7 +76,13 @@ const appState = {
   visualization: null,
   loadToken: 0,
   bridgeReadyPromise: null,
-  theme: DEFAULT_THEME
+  theme: DEFAULT_THEME,
+  settings: {
+    excluded_apps: [],
+    app_aliases: {}
+  },
+  detectedApps: [],
+  editingDetectedAliasApp: ''
 };
 
 const { setColorMap, getColor } = createColorHelpers(appState);
@@ -207,9 +222,30 @@ const renderBrowserHourlyBars = createHourlyStackedBarChartRenderer({
   }
 });
 
+function normalizeAliasLookupKey(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized.endsWith('.exe') ? normalized.slice(0, -4) : normalized;
+}
+
+function applyAliasToItem(item) {
+  if (!item || typeof item !== 'object') return item;
+  const aliasKey = normalizeAliasLookupKey(item.app);
+  const aliasName = appState.settings.app_aliases?.[aliasKey];
+  if (!aliasName) return item;
+  return {
+    ...item,
+    display_name: aliasName
+  };
+}
+
+function applyAliasesToItems(items) {
+  return Array.isArray(items) ? items.map(applyAliasToItem) : [];
+}
+
 function renderApps(items) {
   appListEl.innerHTML = '';
-  if (!items.length) {
+  const aliasedItems = applyAliasesToItems(items);
+  if (!aliasedItems.length) {
     const li = document.createElement('li');
     li.className = 'app-summary-item empty';
     li.textContent = '暂无数据';
@@ -217,7 +253,7 @@ function renderApps(items) {
     return;
   }
 
-  items.forEach(item => {
+  aliasedItems.forEach(item => {
     const li = document.createElement('li');
     li.className = 'app-summary-item';
     const label = item.display_name || item.app;
@@ -402,8 +438,9 @@ function renderInputTrend(items) {
 
 function renderInputTable(items) {
   inputTableEl.innerHTML = '';
+  const aliasedItems = applyAliasesToItems(items);
 
-  if (!items.length) {
+  if (!aliasedItems.length) {
     const empty = document.createElement('div');
     empty.className = 'input-empty';
     empty.textContent = '暂无数据';
@@ -411,12 +448,12 @@ function renderInputTable(items) {
     return;
   }
 
-  const maxPresses = Math.max(...items.map(item => item.presses || 0), 0);
-  const maxClicks = Math.max(...items.map(item => item.clicks || 0), 0);
-  const maxScroll = Math.max(...items.map(item => item.scroll || 0), 0);
-  const maxMoves = Math.max(...items.map(item => item.moves || 0), 0);
+  const maxPresses = Math.max(...aliasedItems.map(item => item.presses || 0), 0);
+  const maxClicks = Math.max(...aliasedItems.map(item => item.clicks || 0), 0);
+  const maxScroll = Math.max(...aliasedItems.map(item => item.scroll || 0), 0);
+  const maxMoves = Math.max(...aliasedItems.map(item => item.moves || 0), 0);
 
-  items.forEach(item => {
+  aliasedItems.forEach(item => {
     const row = document.createElement('div');
     row.className = 'input-bar-row';
 
@@ -529,12 +566,258 @@ function setDashboardFromPayload(payload) {
   renderVisualizations(visualization);
 }
 
-function getErrorMessage(payload) {
-  const code = payload?.error?.code;
-  if (code === 'bridge_not_ready') return '前端桥接尚未就绪';
-  if (code === 'missing_buckets') return '缺少数据桶';
-  if (code === 'query_failed') return '查询数据失败';
-  return '加载失败';
+function sortExcludedApps(items) {
+  return [...items].sort((left, right) => left.localeCompare(right, 'zh-CN', { sensitivity: 'base' }));
+}
+
+function normalizeExcludedAppName(value) {
+  return String(value || '').trim();
+}
+
+function sortAliases(aliases) {
+  return Object.fromEntries(
+    Object.entries(aliases || {}).sort(([left], [right]) => left.localeCompare(right, 'zh-CN', { sensitivity: 'base' }))
+  );
+}
+
+function normalizeAliasKey(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized.endsWith('.exe') ? normalized.slice(0, -4) : normalized;
+}
+
+function normalizeAliasValue(value) {
+  return String(value || '').trim();
+}
+
+function renderDetectedApps() {
+  if (!detectedAppsListEl) return;
+  detectedAppsListEl.innerHTML = '';
+  const items = Array.isArray(appState.detectedApps) ? appState.detectedApps : [];
+  if (!items.length) {
+    detectedAppsListEl.innerHTML = '<div class="input-empty">暂无检测记录</div>';
+    return;
+  }
+
+  items.forEach(item => {
+    const appName = item.app || '';
+    const displayName = item.display_name || '';
+    const isEditing = appState.editingDetectedAliasApp === appName;
+    const row = document.createElement('div');
+    row.className = `settings-row detected-app-row${isEditing ? ' editing' : ''}`;
+    row.innerHTML = isEditing
+      ? `
+        <div class="detected-app-inline-editor">
+          <input class="settings-input detected-alias-app" type="text" value="${escapeHtml(appName)}" readonly />
+          <span class="settings-row-arrow">→</span>
+          <input class="settings-input detected-alias-name" type="text" value="${escapeHtml(displayName)}" data-inline-alias-input="${escapeHtml(appName)}" />
+          <div class="settings-row-actions">
+            <button class="btn" type="button" data-inline-alias-save="${escapeHtml(appName)}">保存别名</button>
+            <button class="btn secondary" type="button" data-inline-alias-cancel="${escapeHtml(appName)}">取消</button>
+          </div>
+        </div>
+      `
+      : `
+        <span class="settings-row-label">${escapeHtml(appName)}</span>
+        <span class="settings-row-arrow">→</span>
+        <span class="settings-row-label">${escapeHtml(displayName)}</span>
+        <div class="settings-row-actions">
+          <button class="btn secondary settings-chip-remove" type="button" data-detected-app="${escapeHtml(appName)}">屏蔽</button>
+          <button class="btn secondary settings-chip-remove" type="button" data-detected-alias-app="${escapeHtml(appName)}" data-detected-alias-name="${escapeHtml(displayName)}">设为别名</button>
+        </div>
+      `;
+    detectedAppsListEl.appendChild(row);
+
+    if (isEditing) {
+      const input = row.querySelector('[data-inline-alias-input]');
+      if (input) {
+        window.setTimeout(() => {
+          input.focus();
+          input.select();
+        }, 0);
+      }
+    }
+  });
+}
+
+async function loadDetectedApps() {
+  const api = await waitForPywebviewApi();
+  appState.detectedApps = await api.get_detected_apps(50);
+  renderDetectedApps();
+}
+
+function renderAliasList() {
+  if (!aliasListEl) return;
+  const items = Object.entries(sortAliases(appState.settings.app_aliases || {}));
+  aliasListEl.innerHTML = '';
+  if (!items.length) {
+    aliasListEl.innerHTML = '<div class="input-empty">暂无应用别名</div>';
+    return;
+  }
+
+  items.forEach(([appName, aliasName]) => {
+    const row = document.createElement('div');
+    row.className = 'settings-row';
+    row.innerHTML = `
+      <span class="settings-row-label">${escapeHtml(appName)}</span>
+      <span class="settings-row-arrow">→</span>
+      <span class="settings-row-label">${escapeHtml(aliasName)}</span>
+      <button class="btn secondary settings-chip-remove" type="button" data-alias-app="${escapeHtml(appName)}">×</button>
+    `;
+    aliasListEl.appendChild(row);
+  });
+}
+
+function applyDetectedAppAsExcluded(appName) {
+  if (!appName) return;
+  const items = new Set(appState.settings.excluded_apps || []);
+  items.add(appName);
+  appState.settings.excluded_apps = sortExcludedApps(Array.from(items));
+  renderExcludedApps();
+}
+
+function applyDetectedAppAsAlias(appName, _aliasName) {
+  if (!appName) return;
+  appState.editingDetectedAliasApp = appName;
+  renderDetectedApps();
+}
+
+function cancelDetectedAppAliasEdit() {
+  appState.editingDetectedAliasApp = '';
+  renderDetectedApps();
+}
+
+async function saveDetectedAppAlias(appName, aliasName) {
+  const normalizedAppName = normalizeAliasKey(appName);
+  const normalizedAliasName = normalizeAliasValue(aliasName);
+  if (!normalizedAppName || !normalizedAliasName) return;
+  appState.settings.app_aliases = sortAliases({
+    ...(appState.settings.app_aliases || {}),
+    [normalizedAppName]: normalizedAliasName
+  });
+  appState.editingDetectedAliasApp = '';
+  renderAliasList();
+  renderDetectedApps();
+  await persistSettings(false);
+}
+
+async function addAlias() {
+  const appName = normalizeAliasKey(aliasAppInputEl?.value);
+  const aliasName = normalizeAliasValue(aliasNameInputEl?.value);
+  if (!appName || !aliasName) return;
+  appState.settings.app_aliases = sortAliases({
+    ...(appState.settings.app_aliases || {}),
+    [appName]: aliasName
+  });
+  if (aliasAppInputEl) aliasAppInputEl.value = '';
+  if (aliasNameInputEl) {
+    aliasNameInputEl.value = '';
+    aliasAppInputEl?.focus();
+  }
+  renderAliasList();
+  await persistSettings(false);
+}
+
+function removeAlias(appName) {
+  const nextAliases = { ...(appState.settings.app_aliases || {}) };
+  delete nextAliases[appName];
+  appState.settings.app_aliases = sortAliases(nextAliases);
+  renderAliasList();
+}
+
+
+function openSettingsModal() {
+  if (!settingsModalEl) return;
+  settingsModalEl.hidden = false;
+  excludedAppInputEl?.focus();
+}
+
+async function openSettingsFromTray() {
+  openSettingsModal();
+  try {
+    await Promise.all([loadSettings(), loadDetectedApps()]);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function closeSettingsModal() {
+  if (!settingsModalEl) return;
+  settingsModalEl.hidden = true;
+}
+
+function renderExcludedApps() {
+  if (!excludedAppsListEl) return;
+  const items = sortExcludedApps(appState.settings.excluded_apps || []);
+  excludedAppsListEl.innerHTML = '';
+  if (!items.length) {
+    excludedAppsListEl.innerHTML = '<div class="input-empty">暂无黑名单应用</div>';
+    return;
+  }
+
+  items.forEach(appName => {
+    const chip = document.createElement('div');
+    chip.className = 'settings-chip';
+    chip.innerHTML = `
+      <span class="settings-chip-label">${escapeHtml(appName)}</span>
+      <button class="btn secondary settings-chip-remove" type="button" data-app="${escapeHtml(appName)}">×</button>
+    `;
+    excludedAppsListEl.appendChild(chip);
+  });
+}
+
+function addExcludedApp() {
+  const appName = normalizeExcludedAppName(excludedAppInputEl?.value);
+  if (!appName) return;
+  const items = new Set(appState.settings.excluded_apps || []);
+  items.add(appName);
+  appState.settings.excluded_apps = sortExcludedApps(Array.from(items));
+  if (excludedAppInputEl) {
+    excludedAppInputEl.value = '';
+    excludedAppInputEl.focus();
+  }
+  renderExcludedApps();
+}
+
+function removeExcludedApp(appName) {
+  appState.settings.excluded_apps = (appState.settings.excluded_apps || []).filter(item => item !== appName);
+  renderExcludedApps();
+}
+
+async function loadSettings() {
+  const api = await waitForPywebviewApi();
+  const payload = await api.get_settings();
+  appState.settings = {
+    excluded_apps: Array.isArray(payload?.excluded_apps) ? sortExcludedApps(payload.excluded_apps.map(normalizeExcludedAppName).filter(Boolean)) : [],
+    app_aliases: sortAliases(payload?.app_aliases || {})
+  };
+  renderExcludedApps();
+  renderAliasList();
+}
+
+async function persistSettings(closeAfterSave = false) {
+  const api = await waitForPywebviewApi();
+  const payload = await api.save_settings(appState.settings.excluded_apps || [], appState.settings.app_aliases || {});
+  appState.settings = {
+    excluded_apps: Array.isArray(payload?.excluded_apps) ? sortExcludedApps(payload.excluded_apps.map(normalizeExcludedAppName).filter(Boolean)) : [],
+    app_aliases: sortAliases(payload?.app_aliases || {})
+  };
+  renderExcludedApps();
+  renderAliasList();
+  renderDetectedApps();
+  if (closeAfterSave) {
+    closeSettingsModal();
+  }
+  await loadData();
+}
+
+
+async function saveSettings() {
+  settingsSaveBtn.disabled = true;
+  try {
+    await persistSettings(true);
+  } finally {
+    settingsSaveBtn.disabled = false;
+  }
 }
 
 function waitForPywebviewApi(timeoutMs = 8000) {
@@ -575,9 +858,7 @@ async function loadDashboardPayload(days) {
 
 async function loadData() {
   const token = ++appState.loadToken;
-  const days = Number(rangeSelect.value || 1);
-  statusEl.textContent = '加载中';
-  refreshBtn.disabled = true;
+  const days = 1;
 
   try {
     const payload = await loadDashboardPayload(days);
@@ -585,23 +866,14 @@ async function loadData() {
 
     if (!payload?.ok) {
       clearDashboard();
-      statusEl.textContent = getErrorMessage(payload);
       return;
     }
 
     setDashboardFromPayload(payload);
-    statusEl.textContent = payload.warnings?.length ? payload.warnings[0] : '已更新';
   } catch (err) {
     if (token !== appState.loadToken) return;
     clearDashboard();
-    statusEl.textContent = err?.message === 'pywebview bridge not ready'
-      ? '前端桥接尚未就绪'
-      : '加载失败';
     console.error(err);
-  } finally {
-    if (token === appState.loadToken) {
-      refreshBtn.disabled = false;
-    }
   }
 }
 
@@ -627,10 +899,98 @@ function initializeDashboardTabs() {
   setActivePanel(appState.currentPanel);
 }
 
-refreshBtn.addEventListener('click', () => loadData());
-rangeSelect.addEventListener('change', () => loadData());
 if (themeToggleBtn) {
   themeToggleBtn.addEventListener('click', toggleTheme);
+}
+if (settingsCloseBtn) {
+  settingsCloseBtn.addEventListener('click', () => closeSettingsModal());
+}
+if (addExcludedAppBtn) {
+  addExcludedAppBtn.addEventListener('click', () => addExcludedApp());
+}
+if (excludedAppInputEl) {
+  excludedAppInputEl.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addExcludedApp();
+    }
+  });
+}
+if (excludedAppsListEl) {
+  excludedAppsListEl.addEventListener('click', event => {
+    const button = event.target.closest('[data-app]');
+    if (!button) return;
+    removeExcludedApp(button.dataset.app || '');
+  });
+}
+if (addAliasBtn) {
+  addAliasBtn.addEventListener('click', () => addAlias().catch(console.error));
+}
+if (aliasAppInputEl && aliasNameInputEl) {
+  const onAliasKeydown = event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addAlias().catch(console.error);
+    }
+  };
+  aliasAppInputEl.addEventListener('keydown', onAliasKeydown);
+  aliasNameInputEl.addEventListener('keydown', onAliasKeydown);
+}
+if (aliasListEl) {
+  aliasListEl.addEventListener('click', event => {
+    const button = event.target.closest('[data-alias-app]');
+    if (!button) return;
+    removeAlias(button.dataset.aliasApp || '');
+  });
+}
+if (settingsSaveBtn) {
+  settingsSaveBtn.addEventListener('click', () => saveSettings());
+}
+if (settingsModalEl) {
+  settingsModalEl.addEventListener('click', event => {
+    if (event.target === settingsModalEl) {
+      closeSettingsModal();
+    }
+  });
+}
+
+if (detectedAppsListEl) {
+  detectedAppsListEl.addEventListener('click', event => {
+    const excludedButton = event.target.closest('[data-detected-app]');
+    if (excludedButton) {
+      applyDetectedAppAsExcluded(excludedButton.dataset.detectedApp || '');
+      return;
+    }
+    const aliasButton = event.target.closest('[data-detected-alias-app]');
+    if (aliasButton) {
+      applyDetectedAppAsAlias(aliasButton.dataset.detectedAliasApp || '', aliasButton.dataset.detectedAliasName || '');
+      return;
+    }
+    const saveButton = event.target.closest('[data-inline-alias-save]');
+    if (saveButton) {
+      const appName = saveButton.dataset.inlineAliasSave || '';
+      const row = saveButton.closest('.detected-app-row');
+      const input = row?.querySelector('[data-inline-alias-input]');
+      saveDetectedAppAlias(appName, input?.value || '').catch(console.error);
+      return;
+    }
+    const cancelButton = event.target.closest('[data-inline-alias-cancel]');
+    if (cancelButton) {
+      cancelDetectedAppAliasEdit();
+    }
+  });
+  detectedAppsListEl.addEventListener('keydown', event => {
+    const input = event.target.closest('[data-inline-alias-input]');
+    if (!input) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveDetectedAppAlias(input.dataset.inlineAliasInput || '', input.value || '').catch(console.error);
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelDetectedAppAliasEdit();
+    }
+  });
 }
 
 window.onHourSelect = onHourSelect;
@@ -640,7 +1000,8 @@ window.AwPywebviewApp = {
   renderXAxisFor,
   buildTooltipContent,
   showTooltip,
-  hideTooltip
+  hideTooltip,
+  openSettingsFromTray
 };
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -648,9 +1009,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   initializeDashboardTabs();
   try {
     await waitForPywebviewApi();
+    await loadDetectedApps();
+    await loadSettings();
   } catch (err) {
     clearDashboard();
-    statusEl.textContent = '前端桥接尚未就绪';
     console.error(err);
     return;
   }

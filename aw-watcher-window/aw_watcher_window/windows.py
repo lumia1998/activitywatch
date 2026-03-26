@@ -1,3 +1,4 @@
+import ctypes
 import os
 import time
 from typing import Iterable, Optional
@@ -26,7 +27,27 @@ GENERIC_DISPLAY_NAMES = {
     "microsoft(r) .net host",
 }
 
+WINDOW_APP_ALIASES = {
+    "360filebrowser64": "360文件夹",
+    "explorer": "360文件夹",
+    "wezterm-gui": "wezterm",
+    "winword": "Word",
+    "notepad": "记事本",
+}
+
+EXCLUDED_PROCESS_NAMES = {
+    "desktopmgr64",
+}
+
 TITLE_SEPARATORS = (" - ", " | ", " — ", " – ", ":")
+DWMWA_CLOAKED = 14
+GA_ROOT = 2
+SW_SHOWMINIMIZED = 2
+
+
+class _WindowPlacement:
+    def __init__(self, show_cmd: int):
+        self.showCmd = show_cmd
 
 
 def get_app_path(hwnd) -> Optional[str]:
@@ -61,7 +82,6 @@ def _iter_version_info_candidates(path: str) -> Iterable[str]:
     yield r"\StringFileInfo\040904B0\ProductName"
 
 
-
 def _is_preferred_display_name(candidate: Optional[str], process_name: str) -> bool:
     if candidate is None:
         return False
@@ -78,7 +98,6 @@ def _is_preferred_display_name(candidate: Optional[str], process_name: str) -> b
         return False
 
     return lowered not in GENERIC_DISPLAY_NAMES
-
 
 
 def _extract_meaningful_title(window_title: str) -> str:
@@ -105,6 +124,75 @@ def _extract_meaningful_title(window_title: str) -> str:
     return segment
 
 
+def _get_root_window(hwnd) -> Optional[int]:
+    try:
+        if hasattr(win32gui, "GetAncestor"):
+            root = win32gui.GetAncestor(hwnd, GA_ROOT)
+            return root or hwnd
+    except Exception:
+        return hwnd
+    return hwnd
+
+
+def _is_minimized_window(hwnd) -> bool:
+    try:
+        if hasattr(win32gui, "IsIconic") and win32gui.IsIconic(hwnd):
+            return True
+        if hasattr(win32gui, "GetWindowPlacement"):
+            placement = win32gui.GetWindowPlacement(hwnd)
+            show_cmd = getattr(placement, "showCmd", None)
+            if isinstance(placement, (tuple, list)) and len(placement) > 1:
+                show_cmd = placement[1]
+            return show_cmd == SW_SHOWMINIMIZED
+    except Exception:
+        return False
+    return False
+
+
+def _is_cloaked_window(hwnd) -> bool:
+    try:
+        cloaked = ctypes.c_int(0)
+        result = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            int(hwnd),
+            DWMWA_CLOAKED,
+            ctypes.byref(cloaked),
+            ctypes.sizeof(cloaked),
+        )
+        if result != 0:
+            return False
+        return bool(cloaked.value)
+    except Exception:
+        return False
+
+
+def _is_real_window(hwnd) -> bool:
+    if not hwnd:
+        return False
+
+    try:
+        if not win32gui.IsWindow(hwnd):
+            return False
+        if not win32gui.IsWindowVisible(hwnd):
+            return False
+        if win32gui.GetWindowText(hwnd).strip() == "":
+            return False
+        if _get_root_window(hwnd) != hwnd:
+            return False
+        if _is_minimized_window(hwnd):
+            return False
+        if _is_cloaked_window(hwnd):
+            return False
+    except Exception:
+        return False
+
+    return True
+
+
+def _is_excluded_process_name(process_name: Optional[str]) -> bool:
+    if not process_name:
+        return False
+    return process_name.strip().lower() in EXCLUDED_PROCESS_NAMES
+
 
 def _get_file_display_name(path: Optional[str], process_name: str) -> str:
     if not path:
@@ -119,7 +207,6 @@ def _get_file_display_name(path: Optional[str], process_name: str) -> str:
         pass
 
     return process_name
-
 
 
 def _resolve_display_name(process_name: str, file_display_name: str, window_title: str) -> str:
@@ -139,11 +226,14 @@ def _resolve_display_name(process_name: str, file_display_name: str, window_titl
         if title_name:
             return title_name
 
+    alias = WINDOW_APP_ALIASES.get(lowered_process_name)
+    if alias:
+        return alias
+
     if _is_preferred_display_name(file_display_name, normalized_process_name):
         return file_display_name.strip()
 
     return normalized_process_name
-
 
 
 def get_process_name(hwnd) -> Optional[str]:

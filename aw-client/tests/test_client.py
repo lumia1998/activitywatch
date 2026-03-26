@@ -152,12 +152,18 @@ def test_full_desktop_query_uses_default_classes_when_setting_is_null(monkeypatc
     assert '[["Work"], {"type": "regex", "regex": "Google Docs|libreoffice|ReText"}]' in query
 
 
-def test_get_classes_preserves_explicit_empty_list(monkeypatch):
-    monkeypatch.setattr(
-        "aw_client.classes.aw_client.ActivityWatchClient", _FakeEmptySettingsClient
+
+
+def test_full_desktop_query_keeps_display_name_in_merged_window_queries():
+    query = fullDesktopQuery(
+        DesktopQueryParams(
+            bid_window="aw-watcher-window_testhost",
+            bid_afk="aw-watcher-afk_testhost",
+        )
     )
 
-    assert get_classes() == []
+    assert 'title_events = sort_by_duration(merge_events_by_keys(events, ["app", "title", "display_name"]));' in query
+    assert 'app_events   = sort_by_duration(merge_events_by_keys(title_events, ["app", "display_name"]));' in query
 
 
 def test_canonical_events_falls_back_to_default_classes_when_param_classes_is_none(

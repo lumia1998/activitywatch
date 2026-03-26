@@ -43,20 +43,36 @@ def test_autostart_starts_server_before_other_modules(monkeypatch):
     assert set(calls[1:]) == {"aw-watcher-input", "aw-watcher-window"}
 
 
-def test_start_prefers_bundled_then_system_then_source(monkeypatch):
+
+
+def test_pause_tracking_stops_watchers_and_resume_restarts_them(monkeypatch):
     manager = object.__new__(Manager)
-    manager.testing = True
+    manager.testing = False
+    manager._paused_modules = []
 
-    bundled = Module("aw-server", Path("/tmp/bundled-aw-server"), "bundled")
-    system = Module("aw-server", Path("/tmp/system-aw-server"), "system")
-    source = Module("aw-server", Path("/tmp/source-aw-server"), "source")
-    manager.modules = [source, system, bundled]
+    server = Module("aw-server", Path("/tmp/aw-server"), "source")
+    watcher_window = Module("aw-watcher-window", Path("/tmp/aw-watcher-window"), "source")
+    watcher_input = Module("aw-watcher-input", Path("/tmp/aw-watcher-input"), "source")
+    manager.modules = [server, watcher_window, watcher_input]
 
-    started = []
-    monkeypatch.setattr(bundled, "start", lambda testing: started.append(("bundled", testing)))
-    monkeypatch.setattr(system, "start", lambda testing: started.append(("system", testing)))
-    monkeypatch.setattr(source, "start", lambda testing: started.append(("source", testing)))
+    monkeypatch.setattr(server, "is_alive", lambda: True)
+    monkeypatch.setattr(watcher_window, "is_alive", lambda: True)
+    monkeypatch.setattr(watcher_input, "is_alive", lambda: True)
 
-    manager.start("aw-server")
+    stopped = []
+    monkeypatch.setattr(server, "stop", lambda: stopped.append("aw-server"))
+    monkeypatch.setattr(watcher_window, "stop", lambda: stopped.append("aw-watcher-window"))
+    monkeypatch.setattr(watcher_input, "stop", lambda: stopped.append("aw-watcher-input"))
 
-    assert started == [("bundled", True)]
+    restarted = []
+    monkeypatch.setattr(manager, "start", lambda name: restarted.append(name))
+
+    manager.pause_tracking()
+
+    assert stopped == ["aw-watcher-window", "aw-watcher-input"]
+    assert manager._paused_modules == ["aw-watcher-window", "aw-watcher-input"]
+
+    manager.resume_tracking()
+
+    assert restarted == ["aw-watcher-window", "aw-watcher-input"]
+    assert manager._paused_modules == []

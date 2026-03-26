@@ -39,6 +39,9 @@ def get_current_window_windows() -> Optional[dict]:
     from . import windows
 
     window_handle = windows.get_active_window_handle()
+    if not windows._is_real_window(window_handle):
+        return None
+
     display_name = None
     process_name = None
     try:
@@ -49,15 +52,21 @@ def get_current_window_windows() -> Optional[dict]:
         display_name = windows.get_app_name_wmi(window_handle)
         process_name = windows.get_process_name_wmi(window_handle)
 
+    if windows._is_excluded_process_name(process_name):
+        return None
+
     title = windows.get_window_title(window_handle)
 
+    # Keep stable process identity in `app`, expose friendly label separately.
     app = process_name or display_name or "unknown"
     if title is None:
         title = "unknown"
 
     payload = {"app": app, "title": title}
-    if display_name and display_name != app:
+    if display_name:
         payload["display_name"] = display_name
+    if process_name:
+        payload["process_name"] = process_name
     return payload
 
 

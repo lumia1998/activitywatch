@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from aw_client import ActivityWatchClient
 
@@ -14,13 +14,23 @@ from .data import (
     build_summary_range,
     build_timeline_from_summary,
     build_visualization_data,
+    configure_app_rules,
     get_consistent_color_mapping,
+    get_detected_apps,
 )
+from .settings import get_settings_payload, save_settings_payload
 
 
 def _start_of_day() -> datetime:
     now = datetime.now().astimezone()
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _range_for_days(days: int) -> Tuple[datetime, datetime]:
+    end = datetime.now().astimezone()
+    normalized_days = max(int(days), 1)
+    start = end.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=normalized_days - 1)
+    return start, end
 
 
 def _empty_browser_summary() -> Dict[str, object]:
@@ -76,26 +86,44 @@ def _error_response(code: str, message: str, details: str = "") -> Dict[str, obj
 
 
 class AppApi:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, settings: Dict[str, object] | None = None) -> None:
+        self._settings = settings or {}
+        self._apply_rules()
+
+    def _apply_rules(self) -> None:
+        configure_app_rules(
+            excluded_apps=self._settings.get("excluded_apps") if isinstance(self._settings.get("excluded_apps"), list) else None,
+            app_aliases=self._settings.get("app_aliases") if isinstance(self._settings.get("app_aliases"), dict) else None,
+        )
 
     def _get_client(self) -> ActivityWatchClient:
         return ActivityWatchClient("aw-pywebview")
 
+    def get_settings(self) -> Dict[str, object]:
+        return get_settings_payload(self._settings)
+
+    def save_settings(self, excluded_apps=None, app_aliases=None) -> Dict[str, object]:
+        payload = save_settings_payload(excluded_apps=excluded_apps, app_aliases=app_aliases)
+        self._settings["excluded_apps"] = payload["excluded_apps"]
+        self._settings["app_aliases"] = payload["app_aliases"]
+        self._apply_rules()
+        return payload
+
     def get_buckets(self) -> Dict[str, dict]:
         return self._get_client().get_buckets()
 
+    def get_detected_apps(self, limit: int = 50) -> List[Dict[str, str]]:
+        return get_detected_apps(limit=limit)
+
     def get_summary_today(self) -> Dict[str, object]:
-        start = _start_of_day()
-        end = datetime.now().astimezone()
+        start, end = _range_for_days(1)
         return build_summary_range(start, end, client=self._get_client())
 
     def get_summary(self, days: int = 1) -> Dict[str, object]:
         return build_summary(days=days, client=self._get_client())
 
     def get_activity(self, days: int = 1, limit: int = 20) -> List[Dict[str, object]]:
-        end = datetime.now().astimezone()
-        start = end - timedelta(days=days)
+        start, end = _range_for_days(days)
         client = self._get_client()
         summary = build_summary_range(start, end, client=client)
         if "error" in summary:
@@ -111,8 +139,7 @@ class AppApi:
         return build_timeline_from_summary(summary, limit=limit)
 
     def get_input_top_apps(self, days: int = 1, top_n: int = 6) -> List[Dict[str, object]]:
-        end = datetime.now().astimezone()
-        start = end - timedelta(days=days)
+        start, end = _range_for_days(days)
         summary = build_summary_range(start, end, client=self._get_client())
         if "error" in summary:
             return []
@@ -141,7 +168,6 @@ class AppApi:
         return build_heatmap_data(summary)
 
     def get_hourly_stats(self, days: int = 1) -> Dict[str, object]:
-        """Unified visualization payload for hourly bars, gantt, and heatmap."""
         summary = self.get_summary(days)
         return build_visualization_data(summary)
 
@@ -152,8 +178,8 @@ class AppApi:
         timeline_limit: int = 40,
         top_n_apps: int = 6,
     ) -> Dict[str, object]:
-        end = datetime.now().astimezone()
-        start = end - timedelta(days=days)
+        self._apply_rules()
+        start, end = _range_for_days(days)
         client = self._get_client()
 
         try:

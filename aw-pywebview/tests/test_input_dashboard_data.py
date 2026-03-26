@@ -1,9 +1,12 @@
 import sys
 import types
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
+import tempfile
+
+
 
 ROOT = Path(__file__).resolve().parents[2]
 for rel in ["aw-client", "aw-core", "aw-server", "aw-pywebview"]:
@@ -166,6 +169,112 @@ def test_build_activity_from_summary_prefers_display_name():
     ]
 
 
+
+def test_record_detected_app_writes_non_chinese_names_only(monkeypatch):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        monkeypatch.setenv("LOCALAPPDATA", temp_dir)
+
+        data_module._record_detected_app("msedgewebview2", "Microsoft Edge WebView2")
+        data_module._record_detected_app("explorer", "360文件夹")
+        data_module._record_detected_app("msedgewebview2", "Microsoft Edge WebView2")
+
+        log_path = Path(temp_dir) / "ActivityWatch" / data_module.DETECTED_APPS_LOG_FILENAME
+        assert log_path.exists()
+        assert log_path.read_text(encoding="utf-8") == "msedgewebview2\tMicrosoft Edge WebView2\n"
+
+
+
+def test_get_detected_apps_returns_latest_unique_entries(monkeypatch):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        monkeypatch.setenv("LOCALAPPDATA", temp_dir)
+        log_path = Path(temp_dir) / "ActivityWatch" / data_module.DETECTED_APPS_LOG_FILENAME
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            "python\tVisual Studio Code\nmsedgewebview2\tMicrosoft Edge WebView2\npython\tVisual Studio Code\n",
+            encoding="utf-8",
+        )
+
+        assert data_module.get_detected_apps(limit=10) == [
+            {"app": "python", "display_name": "Visual Studio Code"},
+            {"app": "msedgewebview2", "display_name": "Microsoft Edge WebView2"},
+        ]
+
+
+
+
+
+def test_build_activity_from_summary_filters_excluded_apps_case_insensitively_and_by_prefix():
+    data_module.configure_app_rules(excluded_apps=["DESKTOPMGR64", "wezterm*"])
+    try:
+        summary = _summary()
+        summary["result"]["window"]["app_events"] = [
+            {
+                "duration": 1200,
+                "data": {"app": "desktopMgr64", "title": "desktopMgr64"},
+            },
+            {
+                "duration": 1800,
+                "data": {"app": "wezterm-gui", "title": "term"},
+            },
+            {
+                "duration": 2400,
+                "data": {"app": "python", "display_name": "Visual Studio Code", "title": "activitywatch - Visual Studio Code"},
+            },
+        ]
+
+        result = build_activity_from_summary(summary, limit=10)
+
+        assert result == [
+            {
+                "app": "python",
+                "display_name": "Visual Studio Code",
+                "title": "activitywatch - Visual Studio Code",
+                "duration": 2400,
+            }
+        ]
+    finally:
+        data_module.configure_app_rules()
+
+
+
+
+def test_build_activity_from_summary_merges_apps_with_same_alias():
+    summary = _summary()
+    summary["result"]["window"]["app_events"] = [
+        {
+            "duration": 1800,
+            "data": {"app": "360FileBrowser64", "title": "工作资料 - 360文件夹"},
+        },
+        {
+            "duration": 1200,
+            "data": {"app": "explorer", "title": "下载 - 文件资源管理器"},
+        },
+    ]
+    summary["result"]["events"] = [
+        {
+            "timestamp": "2026-03-20T09:00:00+08:00",
+            "duration": 1800,
+            "data": {"app": "360FileBrowser64", "$category": ["work"], "title": "工作资料 - 360文件夹"},
+        },
+        {
+            "timestamp": "2026-03-20T09:30:00+08:00",
+            "duration": 1200,
+            "data": {"app": "explorer", "$category": ["work"], "title": "下载 - 文件资源管理器"},
+        },
+    ]
+
+    result = build_activity_from_summary(summary, limit=10)
+
+    assert result == [
+        {
+            "app": "explorer",
+            "display_name": "360文件夹",
+            "title": "工作资料 - 360文件夹",
+            "duration": 3000.0,
+        },
+    ]
+
+
 def test_build_activity_with_input_merges_stats_without_changing_order():
     client = FakeClient(
         [
@@ -192,6 +301,57 @@ def test_build_activity_with_input_merges_stats_without_changing_order():
     assert result[1]["presses"] == 5
     assert result[1]["clicks"] == 1
     assert result[1]["scroll"] == 2
+
+
+def test_build_input_by_app_merges_same_display_name_ranges():
+    client = FakeClient(
+        [
+            FakeEvent("2026-03-20T09:10:00+08:00", {"presses": 10, "clicks": 2, "scrollX": 0, "scrollY": 3, "deltaX": 0, "deltaY": 0}),
+            FakeEvent("2026-03-20T09:40:00+08:00", {"presses": 5, "clicks": 1, "scrollX": 0, "scrollY": 2, "deltaX": 0, "deltaY": 0}),
+        ]
+    )
+
+    summary = _summary()
+    summary["result"]["window"]["app_events"] = [
+        {
+            "duration": 1800,
+            "data": {"app": "360FileBrowser64", "title": "工作资料 - 360文件夹"},
+        },
+        {
+            "duration": 1800,
+            "data": {"app": "explorer", "title": "下载 - 文件资源管理器"},
+        },
+    ]
+    summary["result"]["events"] = [
+        {
+            "timestamp": "2026-03-20T09:00:00+08:00",
+            "duration": 1800,
+            "data": {"app": "360FileBrowser64", "$category": ["work"], "title": "工作资料 - 360文件夹"},
+        },
+        {
+            "timestamp": "2026-03-20T09:30:00+08:00",
+            "duration": 1800,
+            "data": {"app": "explorer", "$category": ["work"], "title": "下载 - 文件资源管理器"},
+        },
+    ]
+
+    result = build_input_by_app(
+        summary=summary,
+        start=datetime.fromisoformat("2026-03-20T09:00:00+08:00"),
+        end=datetime.fromisoformat("2026-03-20T10:00:00+08:00"),
+        top_n=6,
+        client=client,
+    )
+
+    assert result == [
+        {"app": "explorer", "display_name": "360文件夹", "presses": 15, "clicks": 3, "scroll": 5, "moves": 0, "total": 23},
+    ]
+
+
+def test_resolve_display_name_aliases_wezterm_word_and_notepad():
+    assert data_module._resolve_display_name("wezterm-gui", "term", None) == "wezterm"
+    assert data_module._resolve_display_name("WINWORD", "Microsoft Word", None) == "Word"
+    assert data_module._resolve_display_name("notepad", "Notepad", None) == "记事本"
 
 
 def test_build_input_stats_full_summarizes_all_metrics():
@@ -237,6 +397,32 @@ def test_build_input_by_app_assigns_events_to_active_window_ranges():
 
     assert result == [
         {"app": "python", "display_name": "Visual Studio Code", "presses": 10, "clicks": 2, "scroll": 3, "moves": 0, "total": 15},
+        {"app": "msedgewebview2", "display_name": "Microsoft Edge WebView2", "presses": 5, "clicks": 1, "scroll": 2, "moves": 0, "total": 8},
+    ]
+
+
+
+def test_build_input_by_app_filters_excluded_apps():
+    client = FakeClient(
+        [
+            FakeEvent("2026-03-20T09:10:00+08:00", {"presses": 10, "clicks": 2, "scrollX": 0, "scrollY": 3, "deltaX": 0, "deltaY": 0}),
+            FakeEvent("2026-03-20T10:20:00+08:00", {"presses": 5, "clicks": 1, "scrollX": 0, "scrollY": 2, "deltaX": 0, "deltaY": 0}),
+        ]
+    )
+
+    data_module.configure_app_rules(excluded_apps=["python"])
+    try:
+        result = build_input_by_app(
+            summary=_summary(),
+            start=datetime.fromisoformat("2026-03-20T09:00:00+08:00"),
+            end=datetime.fromisoformat("2026-03-20T12:00:00+08:00"),
+            top_n=6,
+            client=client,
+        )
+    finally:
+        data_module.configure_app_rules()
+
+    assert result == [
         {"app": "msedgewebview2", "display_name": "Microsoft Edge WebView2", "presses": 5, "clicks": 1, "scroll": 2, "moves": 0, "total": 8},
     ]
 
@@ -394,25 +580,28 @@ def test_build_browser_summary_returns_top_domain_and_totals():
     }
 
 
-def test_build_browser_trend_projects_utc_hours_into_summary_timezone():
+
+
+def test_build_browser_trend_uses_system_timezone_when_summary_has_no_timezone(monkeypatch):
+    monkeypatch.setattr(
+        data_module,
+        "_system_timezone",
+        lambda: timezone(timedelta(hours=8)),
+    )
+
     summary = _summary()
+    summary["time_range"] = {"start": None, "end": None}
     summary["result"]["browser"]["events"] = [
         {
             "timestamp": "2026-03-20T01:10:00+00:00",
             "duration": 1800,
             "data": {"$domain": "github.com", "url": "https://github.com/ActivityWatch/activitywatch"},
         },
-        {
-            "timestamp": "2026-03-20T03:00:00+00:00",
-            "duration": 1800,
-            "data": {"$domain": "bilibili.com", "url": "https://www.bilibili.com/video/BV1xx"},
-        },
     ]
 
     trend = build_browser_trend(summary, top_n_domains=4)
 
     assert trend["hourlyBars"][9]["total"] == 1800.0
-    assert trend["hourlyBars"][11]["total"] == 1800.0
     assert trend["hourlyBars"][1]["total"] == 0.0
 
 

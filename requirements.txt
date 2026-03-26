@@ -1,5 +1,6 @@
 # Final comprehensive dependencies for ActivityWatch submodules
 pywebview>=5.1
+pystray>=0.19.5
 Pillow>=10.4.0
 requests>=2.32.3
 urllib3<2

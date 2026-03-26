@@ -25,7 +25,7 @@ div
 
     div(v-if="type == 'top_apps'")
       aw-summary(:fields="activityStore.window.top_apps",
-                 :namefunc="e => e.data.app",
+                 :namefunc="top_apps_namefunc",
                  :colorfunc="e => e.data.app",
                  with_limit)
     div(v-if="type == 'top_titles'")
@@ -159,6 +159,19 @@ export default {
         'score',
         'top_stopwatches',
       ],
+      // TODO: Move this function somewhere else
+      top_apps_namefunc: e => {
+        const app = e.data.app || '';
+        const mapping = {
+          'Weixin': '微信',
+          'weixin': '微信',
+          'explorer.exe': '资源管理器',
+          'Windows 资源管理器': '资源管理器',
+          'msedge.exe': 'Microsoft Edge',
+          'chrome.exe': 'Google Chrome',
+        };
+        return mapping[app] || app;
+      },
       // TODO: Move this function somewhere else
       top_editor_files_namefunc: e => {
         let f = e.data.file || '';

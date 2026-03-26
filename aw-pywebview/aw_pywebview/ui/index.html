@@ -44,21 +44,11 @@
           </div>
 
           <div class="toolbar-panel">
-            <div class="status-wrap">
-              <span class="status-label">状态</span>
-              <span id="status" class="badge">加载中</span>
-            </div>
-            <div class="toolbar">
+            <div class="toolbar-actions">
               <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="切换到深色主题" title="切换到深色主题">
                 <span class="theme-toggle-icon theme-toggle-sun" aria-hidden="true">☀</span>
                 <span class="theme-toggle-icon theme-toggle-moon" aria-hidden="true">☾</span>
               </button>
-              <select id="rangeSelect" class="select">
-                <option value="1">近 24 小时</option>
-                <option value="3">近 3 天</option>
-                <option value="7">近 7 天</option>
-              </select>
-              <button id="refreshBtn" class="btn secondary">刷新数据</button>
             </div>
           </div>
         </header>
@@ -189,6 +179,64 @@
           </main>
         </div>
       </div>
+    </div>
+
+    <div id="settingsModal" class="modal-backdrop" hidden>
+      <section class="settings-modal card-shell" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="settings-header">
+          <div>
+            <h2 id="settingsTitle">设置</h2>
+            <div class="hint">手动屏蔽不该统计的应用，按进程名保存。</div>
+          </div>
+          <button id="settingsCloseBtn" class="btn secondary icon-btn" type="button" aria-label="关闭设置">关闭</button>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-form-row">
+            <input id="excludedAppInput" class="settings-input" type="text" placeholder="例如 desktopMgr64" />
+            <button id="addExcludedAppBtn" class="btn" type="button">添加黑名单</button>
+          </div>
+          <div class="hint">已屏蔽的应用会从统计中移除，比如 desktopMgr64。检测到的非中文应用名会自动记录到本地文件，方便你查进程名。</div>
+          <div class="hint">日志文件：%LOCALAPPDATA%\ActivityWatch\detected-non-chinese-apps.txt</div>
+        </div>
+
+        <div class="settings-section">
+          <div id="excludedAppsList" class="settings-chip-list">
+            <div class="input-empty">暂无黑名单应用</div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="card-header compact">
+            <div>
+              <h2>最近检测到的应用</h2>
+            </div>
+          </div>
+          <div class="hint">这里会显示最近记录到本地文件里的非中文应用，方便你直接复制进黑名单或先带入别名输入框后再修改。</div>
+          <div id="detectedAppsList" class="settings-list settings-list-rows">
+            <div class="input-empty">暂无检测记录</div>
+          </div>
+        </div>
+
+        <div id="aliasEditorSection" class="settings-section">
+          <div class="settings-form-row settings-form-grid">
+            <input id="aliasAppInput" class="settings-input" type="text" placeholder="进程名，例如 360FileBrowser64" />
+            <input id="aliasNameInput" class="settings-input" type="text" placeholder="显示名，例如 360文件夹" />
+            <button id="addAliasBtn" class="btn" type="button">添加别名</button>
+          </div>
+          <div class="hint">把进程名映射为你想看到的应用名称，例如 explorer → 360文件夹。</div>
+        </div>
+
+        <div class="settings-section">
+          <div id="aliasList" class="settings-list settings-list-rows">
+            <div class="input-empty">暂无应用别名</div>
+          </div>
+        </div>
+
+        <div class="settings-footer">
+          <button id="settingsSaveBtn" class="btn" type="button">保存设置</button>
+        </div>
+      </section>
     </div>
 
     <script src="utils/formatters.js"></script>

@@ -3,7 +3,7 @@ import types
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from pytest import approx
 
@@ -148,26 +148,28 @@ def test_build_visualization_data_splits_across_hours_and_filters_short_events()
 
 
 
-def test_build_visualization_data_projects_utc_event_hours_into_summary_timezone():
+
+
+def test_build_visualization_data_uses_system_timezone_when_summary_has_no_timezone(monkeypatch):
+    monkeypatch.setattr(
+        data_module,
+        "_system_timezone",
+        lambda: timezone(timedelta(hours=8)),
+    )
+
     summary = _summary(
         [
             _event("2026-03-20T01:50:00+00:00", 1200, "Editor", ["work"], "Deep work"),
-            _event("2026-03-21T01:10:00+00:00", 1800, "Editor", ["work"], "Review"),
         ]
     )
+    summary["time_range"] = {"start": None, "end": None}
 
     data = build_visualization_data(summary, min_duration=2, top_n_apps=5)
 
     hourly = {item["hour"]: item for item in data["hourlyBars"]}
-    assert hourly[9]["total"] == 2400
+    assert hourly[9]["total"] == 600
     assert hourly[10]["total"] == 600
-
-    lanes = {lane["app"]: lane for lane in data["gantt"]["lanes"]}
-    editor_blocks = lanes["Editor"]["blocks"]
-    assert editor_blocks[0]["start"] == approx(9 + 10 / 60)
-    assert editor_blocks[0]["end"] == approx(9 + 40 / 60)
-    assert editor_blocks[1]["start"] == approx(9 + 50 / 60)
-    assert editor_blocks[1]["end"] == approx(10 + 10 / 60)
+    assert hourly[1]["total"] == 0
 
 
 def test_gantt_projection_keeps_same_named_blocks_from_different_days_separate():

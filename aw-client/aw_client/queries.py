@@ -255,8 +255,8 @@ def fullDesktopQuery(
     # Build the base query
     query = f"""
     {canonicalEvents(params)}
-    title_events = sort_by_duration(merge_events_by_keys(events, ["app", "title"]));
-    app_events   = sort_by_duration(merge_events_by_keys(title_events, ["app"]));
+    title_events = sort_by_duration(merge_events_by_keys(events, ["app", "title", "display_name"]));
+    app_events   = sort_by_duration(merge_events_by_keys(title_events, ["app", "display_name"]));
     cat_events   = sort_by_duration(merge_events_by_keys(events, ["$category"]));
     app_events  = limit_events(app_events, {default_limit});
     title_events  = limit_events(title_events, {default_limit});

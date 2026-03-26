@@ -185,6 +185,37 @@ export function canonicalMultideviceEvents(params: MultiQueryParams): string {
 
 const default_limit = 100; // Hardcoded limit per group
 
+const ignored_apps = [
+  'unknown',
+  'Microsoft Edge WebView2',
+  'msedgewebview2.exe',
+  'msedgewebview2',
+  'QQScreenshot',
+  'QQScreenshot.exe',
+  'QQ截图',
+  'QQ截图工具',
+  'ShellExperienceHost.exe',
+  'ShellExperienceHost',
+  'SearchHost.exe',
+  'SearchHost',
+  'StartMenuExperienceHost.exe',
+  'StartMenuExperienceHost',
+  'Taskmgr.exe',
+  'Taskmgr',
+  '任务管理器',
+  'LockApp.exe',
+  'LockApp',
+  '锁定界面应用',
+  'ApplicationFrameHost.exe',
+  'ApplicationFrameHost',
+  'SystemSettings.exe',
+  'SystemSettings',
+  '设置',
+  'Windows 资源管理器',
+  'explorer.exe',
+  '资源管理器',
+];
+
 export function appQuery(
   appbucket: string,
   categories: Category[],
@@ -197,8 +228,11 @@ export function appQuery(
     filter_categories,
   };
 
+  const ignored_apps_str = JSON.stringify(ignored_apps);
+
   const code = `
     ${canonicalEvents(params)}
+    events = filter_keyvals(events, "app", ${ignored_apps_str}, exclude=true);
 
     title_events = sort_by_duration(merge_events_by_keys(events, ["app", "classname"]));
     app_events   = sort_by_duration(merge_events_by_keys(title_events, ["app"]));
@@ -218,8 +252,12 @@ const browser_appnames = {
     // Chrome
     'Google Chrome',
     'Google-chrome',
-    'chrome.exe',
+    'google-chrome',
     'google-chrome-stable',
+    'chrome.exe',
+    'Chrome.exe',
+    'Chrome',
+    'chrome',
     'com.google.Chrome',
 
     // Chromium
@@ -272,10 +310,22 @@ const browser_appnames = {
     'waterfox.exe',
     'net.waterfox.waterfox',
   ],
-  opera: ['opera.exe', 'Opera', 'com.opera.Opera'],
-  brave: ['Brave-browser', 'brave-browser', 'Brave Browser', 'brave.exe', 'com.brave.Browser'],
+  safari: ['Safari', 'com.apple.Safari'],
+  opera: ['opera.exe', 'Opera.exe', 'Opera', 'opera', 'com.opera.Opera', 'com.operasoftware.Opera'],
+  brave: [
+    'Brave-browser',
+    'brave-browser',
+    'Brave Browser',
+    'brave.exe',
+    'Brave.exe',
+    'Brave',
+    'brave',
+    'com.brave.Browser',
+  ],
   edge: [
-    'msedge.exe', // Windows
+    'msedge.exe',
+    'Msedge.exe',
+    'msedge',
     'Microsoft Edge', // macOS
     'Microsoft Edge Beta', // macOS beta
     'Microsoft-Edge-Stable', // Arch Linux: https://github.com/ActivityWatch/activitywatch/issues/753
@@ -290,7 +340,15 @@ const browser_appnames = {
     'Arc.exe', // Windows
     'Arc', // macOS
   ],
-  vivaldi: ['Vivaldi-stable', 'Vivaldi-snapshot', 'vivaldi.exe', 'Vivaldi', 'com.vivaldi.Vivaldi'],
+  vivaldi: [
+    'Vivaldi-stable',
+    'Vivaldi-snapshot',
+    'vivaldi.exe',
+    'Vivaldi.exe',
+    'Vivaldi',
+    'vivaldi',
+    'com.vivaldi.Vivaldi',
+  ],
   orion: ['Orion'],
   yandex: ['Yandex', 'ru.yandex.Browser'],
   zen: [
@@ -308,15 +366,14 @@ const browser_appnames = {
 
 // Returns a list of (browserName, bucketId) pairs for found browser buckets
 function browsersWithBuckets(browserbuckets: string[]): [string, string][] {
-  const browsername_to_bucketid: [string, string | undefined][] = _.map(
-    Object.keys(browser_appnames),
-    browserName => {
-      const bucketId = _.find(browserbuckets, bucket_id => _.includes(bucket_id, browserName));
-      return [browserName, bucketId];
+  const pairs: [string, string][] = [];
+  _.each(browserbuckets, bucketId => {
+    const browserName = _.find(Object.keys(browser_appnames), name => _.includes(bucketId, name));
+    if (browserName) {
+      pairs.push([browserName, bucketId]);
     }
-  );
-  // Skip browsers for which a bucket couldn't be found
-  return _.filter(browsername_to_bucketid, ([, bucketId]) => bucketId !== undefined);
+  });
+  return pairs;
 }
 
 // Returns a list of active browser events (where the browser was the active window) from all browser buckets
@@ -327,17 +384,25 @@ function browserEvents(params: DesktopQueryParams): string {
 
   _.each(browsersWithBuckets(params.bid_browsers), ([browserName, bucketId]) => {
     const browser_appnames_str = JSON.stringify(browser_appnames[browserName]);
-    code += `events_${browserName} = flood(query_bucket("${bucketId}"));
-       window_${browserName} = filter_keyvals(events, "app", ${browser_appnames_str});
-       events_${browserName} = filter_period_intersect(events_${browserName}, window_${browserName});
-       events_${browserName} = split_url_events(events_${browserName});
-       browser_events = concat(browser_events, events_${browserName});
+    const bid = bucketId.replace(/[^a-zA-Z0-9_]/g, '_');
+    code += `all_events_${bid} = flood(query_bucket("${bucketId}"));
+       window_${bid} = filter_keyvals(events, "app", ${browser_appnames_str});
+       focused_events_${bid} = filter_period_intersect(all_events_${bid}, window_${bid});
+       ${
+         params.include_audible
+           ? `audible_events_${bid} = filter_keyvals(all_events_${bid}, "audible", [true]);
+       events_${bid} = union_no_overlap(focused_events_${bid}, audible_events_${bid});`
+           : `events_${bid} = focused_events_${bid};`
+       }
+       events_${bid} = split_url_events(events_${bid});
+       browser_events = concat(browser_events, events_${bid});
        browser_events = sort_by_timestamp(browser_events);`;
   });
   return code;
 }
 
 export function fullDesktopQuery(params: DesktopQueryParams): string[] {
+  const ignored_apps_str = JSON.stringify(ignored_apps);
   return querystr_to_array(
     `
     ${canonicalEvents({
@@ -347,6 +412,8 @@ export function fullDesktopQuery(params: DesktopQueryParams): string[] {
       bid_afk: escape_doublequote(params.bid_afk),
       bid_browsers: _.map(params.bid_browsers, escape_doublequote),
     })}
+    events = filter_keyvals(events, "app", ${ignored_apps_str}, exclude=true);
+
     title_events = sort_by_duration(merge_events_by_keys(events, ["app", "title"]));
     app_events   = sort_by_duration(merge_events_by_keys(title_events, ["app"]));
     cat_events   = sort_by_duration(merge_events_by_keys(events, ["$category"]));
@@ -356,7 +423,6 @@ export function fullDesktopQuery(params: DesktopQueryParams): string[] {
     duration = sum_durations(events);
     ` + // Browser events are retrieved in canonicalQuery
       `
-    browser_events = split_url_events(browser_events);
     browser_urls = merge_events_by_keys(browser_events, ["url"]);
     browser_urls = sort_by_duration(browser_urls);
     browser_urls = limit_events(browser_urls, ${default_limit});

@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime, timedelta, tzinfo
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -32,11 +33,144 @@ GENERIC_DISPLAY_NAMES = {
 WINDOW_APP_ALIASES = {
     "centbrowser": "Cent Browser",
     "msedgewebview2": "Microsoft Edge WebView2",
-    "explorer": "Windows 资源管理器",
+    "360filebrowser64": "360文件夹",
+    "explorer": "360文件夹",
+    "wezterm-gui": "wezterm",
+    "winword": "Word",
+    "notepad": "记事本",
 }
+DEFAULT_WINDOW_APP_ALIASES = dict(WINDOW_APP_ALIASES)
+EXCLUDED_APPS: set[str] = set()
+EXCLUDED_APP_PATTERNS: set[str] = set()
+DETECTED_APPS_LOG_FILENAME = "detected-non-chinese-apps.txt"
+
+
+def _detected_apps_log_path() -> Path:
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    base_dir = Path(local_appdata) if local_appdata else Path.home()
+    return base_dir / "ActivityWatch" / DETECTED_APPS_LOG_FILENAME
+
+
+def _contains_chinese(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    return any("\u4e00" <= char <= "\u9fff" for char in value)
+
+
+def _record_detected_app(app: object, display_name: object) -> None:
+    if not isinstance(app, str) or not app.strip():
+        return
+
+    normalized_app = app.strip()
+    normalized_display_name = display_name.strip() if isinstance(display_name, str) else ""
+    if not normalized_display_name or normalized_display_name == "unknown":
+        return
+    if _contains_chinese(normalized_display_name):
+        return
+
+    log_path = _detected_apps_log_path()
+    line = f"{normalized_app}\t{normalized_display_name}\n"
+
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        if line in existing:
+            return
+        with log_path.open("a", encoding="utf-8") as file:
+            file.write(line)
+    except Exception:
+        return
+
+
+def get_detected_apps(limit: int = 50) -> List[Dict[str, str]]:
+    log_path = _detected_apps_log_path()
+    try:
+        if not log_path.exists():
+            return []
+        lines = [line.strip() for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except Exception:
+        return []
+
+    items: List[Dict[str, str]] = []
+    for line in reversed(lines):
+        app_name, _, display_name = line.partition("\t")
+        app_name = app_name.strip()
+        display_name = display_name.strip()
+        if not app_name or not display_name:
+            continue
+        items.append({"app": app_name, "display_name": display_name})
+
+    unique_items: List[Dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        key = (item["app"], item["display_name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_items.append(item)
+        if limit > 0 and len(unique_items) >= limit:
+            break
+
+    return unique_items
+
+
+def _normalize_alias_key(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower()
+    if normalized.endswith(".exe"):
+        normalized = normalized[:-4]
+    return normalized
+
+
+def configure_app_rules(excluded_apps: Optional[List[str]] = None, app_aliases: Optional[Dict[str, str]] = None) -> None:
+    WINDOW_APP_ALIASES.clear()
+    WINDOW_APP_ALIASES.update(DEFAULT_WINDOW_APP_ALIASES)
+    for key, value in (app_aliases or {}).items():
+        normalized_key = _normalize_alias_key(key)
+        normalized_value = value.strip() if isinstance(value, str) else ""
+        if normalized_key and normalized_value:
+            WINDOW_APP_ALIASES[normalized_key] = normalized_value
+
+    EXCLUDED_APPS.clear()
+    EXCLUDED_APP_PATTERNS.clear()
+    for app in excluded_apps or []:
+        normalized_app = _normalize_alias_key(app)
+        if not normalized_app:
+            continue
+
+        alias = WINDOW_APP_ALIASES.get(normalized_app, normalized_app)
+        normalized_alias = _normalize_alias_key(alias)
+        EXCLUDED_APPS.add(normalized_app)
+        if normalized_alias:
+            EXCLUDED_APPS.add(normalized_alias)
+
+        for candidate in {normalized_app, normalized_alias}:
+            if candidate and any(char in candidate for char in ("*", "?")):
+                EXCLUDED_APP_PATTERNS.add(candidate)
+
+
+def _is_excluded_app(value: object) -> bool:
+    normalized = _normalize_alias_key(value)
+    if not normalized:
+        return False
+    if normalized in EXCLUDED_APPS:
+        return True
+    return any(
+        pattern.strip("*") and pattern.strip("*") in normalized
+        for pattern in EXCLUDED_APP_PATTERNS
+        if pattern.startswith("*") and pattern.endswith("*") and len(pattern) > 2
+    ) or any(
+        normalized.endswith(pattern[1:])
+        for pattern in EXCLUDED_APP_PATTERNS
+        if pattern.startswith("*") and not pattern.endswith("*") and len(pattern) > 1
+    ) or any(
+        normalized.startswith(pattern[:-1])
+        for pattern in EXCLUDED_APP_PATTERNS
+        if pattern.endswith("*") and not pattern.startswith("*") and len(pattern) > 1
+    )
 TITLE_SEPARATORS = (" - ", " | ", " — ", " – ", ":")
 DEFAULT_COLOR_PALETTE = [
-
     "#3b82f6",
     "#ef4444",
     "#10b981",
@@ -89,15 +223,26 @@ def _extract_timezone(reference: object) -> Optional[tzinfo]:
     return None
 
 
+def _system_timezone() -> Optional[tzinfo]:
+    return datetime.now().astimezone().tzinfo
+
+
+def _convert_to_local_timezone(value: datetime) -> datetime:
+    local_tz = _system_timezone()
+    if local_tz and value.tzinfo is not None:
+        return value.astimezone(local_tz)
+    return value
+
+
 def _convert_to_timezone(value: datetime, target_tz: Optional[tzinfo]) -> datetime:
-    if not target_tz or value.tzinfo is None:
-        return value
-    return value.astimezone(target_tz)
+    if target_tz and value.tzinfo is not None:
+        return value.astimezone(target_tz)
+    return _convert_to_local_timezone(value)
 
 
 def _summary_timezone(summary: Dict[str, object]) -> Optional[tzinfo]:
     time_range = summary.get("time_range", {}) if isinstance(summary, dict) else {}
-    return _extract_timezone(time_range.get("start"))
+    return _extract_timezone(time_range.get("start")) or _system_timezone()
 
 
 def _build_summary_with_client(
@@ -150,7 +295,8 @@ def build_summary(
     days: int = 1, client: Optional[ActivityWatchClient] = None
 ) -> Dict[str, object]:
     now = datetime.now().astimezone()
-    start = now - timedelta(days=days)
+    normalized_days = max(int(days), 1)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=normalized_days - 1)
     client = client or ActivityWatchClient("aw-pywebview")
     return _build_summary_with_client(start, now, client)
 
@@ -159,7 +305,9 @@ def _normalize_app_name(value: object) -> str:
     if not isinstance(value, str):
         return "unknown"
     normalized = value.strip()
-    return normalized or "unknown"
+    if not normalized:
+        return "unknown"
+    return normalized
 
 
 def _extract_meaningful_title(window_title: str) -> str:
@@ -201,13 +349,8 @@ def _is_preferred_display_name(candidate: object, app_name: str) -> bool:
 def _resolve_display_name(app_name: object, title: object, preferred: object = None) -> str:
     normalized_app = _normalize_app_name(app_name)
     normalized_title = title.strip() if isinstance(title, str) else ""
-
-    if isinstance(preferred, str) and preferred.strip():
-        normalized_preferred = preferred.strip()
-        if _is_preferred_display_name(normalized_preferred, normalized_app):
-            return normalized_preferred
-
     lower_app = normalized_app.lower()
+
     if lower_app == "unknown":
         return "unknown"
 
@@ -219,9 +362,14 @@ def _resolve_display_name(app_name: object, title: object, preferred: object = N
         if title_name:
             return title_name
 
-    alias = WINDOW_APP_ALIASES.get(lower_app)
+    alias = WINDOW_APP_ALIASES.get(_normalize_alias_key(lower_app))
     if alias:
         return alias
+
+    if isinstance(preferred, str) and preferred.strip():
+        normalized_preferred = preferred.strip()
+        if _is_preferred_display_name(normalized_preferred, normalized_app):
+            return normalized_preferred
 
     return normalized_app
 
@@ -235,6 +383,9 @@ def _extract_activity_item(ev: Dict[str, object]) -> Dict[str, object]:
         title=title,
         preferred=data.get("display_name") or data.get("app_display") or data.get("app_name"),
     )
+    if _is_excluded_app(app) or _is_excluded_app(display_name):
+        return {}
+    _record_detected_app(app, display_name)
     return {
         "app": app,
         "display_name": display_name,
@@ -251,6 +402,37 @@ def _activity_lookup(items: List[Dict[str, object]]) -> Dict[str, Dict[str, obje
     }
 
 
+def _merge_activity_items(items: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    grouped: Dict[str, Dict[str, object]] = {}
+    for item in items:
+        app = _normalize_app_name(item.get("app"))
+        display_name = _resolve_display_name(
+            app,
+            item.get("title"),
+            item.get("display_name") or item.get("app_display") or item.get("app_name"),
+        )
+        group_key = _normalize_alias_key(display_name)
+        current = grouped.get(group_key)
+        if current is None:
+            grouped[group_key] = {
+                "app": app,
+                "display_name": display_name,
+                "title": item.get("title", ""),
+                "duration": _to_seconds(item.get("duration", 0)),
+            }
+            continue
+
+        current["duration"] += _to_seconds(item.get("duration", 0))
+        if not current.get("title") and item.get("title"):
+            current["title"] = item.get("title", "")
+        if _normalize_alias_key(current.get("app")) != group_key:
+            current["app"] = app
+
+    merged_items = list(grouped.values())
+    merged_items.sort(key=lambda item: (-_to_seconds(item.get("duration", 0)), str(item.get("display_name", "")), str(item.get("app", ""))))
+    return merged_items
+
+
 def build_activity_from_summary(
     summary: Dict[str, object], limit: int = 20
 ) -> List[Dict[str, object]]:
@@ -260,6 +442,7 @@ def build_activity_from_summary(
 
     app_events = result.get("window", {}).get("app_events", [])
     items = [_extract_activity_item(ev) for ev in app_events]
+    items = _merge_activity_items([item for item in items if item])
     return items[:limit] if limit > 0 else items
 
 
@@ -333,6 +516,11 @@ def build_timeline_from_summary(
             }
         )
 
+    items = [
+        item
+        for item in items
+        if not _is_excluded_app(item.get("app")) and not _is_excluded_app(item.get("display_name"))
+    ]
     if limit > 0:
         items = items[-limit:]
 
@@ -476,6 +664,9 @@ def _build_key_stats_by_app(day_payload: Dict[str, Any], top_n: int = 6) -> List
             "",
             raw.get("DisplayName") or raw.get("display_name") or raw.get("app_display"),
         )
+        if _is_excluded_app(stable_app) or _is_excluded_app(display_name):
+            continue
+        _record_detected_app(stable_app, display_name)
         items.append(
             {
                 "app": stable_app,
@@ -488,6 +679,11 @@ def _build_key_stats_by_app(day_payload: Dict[str, Any], top_n: int = 6) -> List
             }
         )
 
+    items = [
+        item
+        for item in items
+        if not _is_excluded_app(item.get("app")) and not _is_excluded_app(item.get("display_name"))
+    ]
     items.sort(key=lambda item: (-item["total"], -item["presses"], item["display_name"], item["app"]))
     return items[:top_n] if top_n > 0 else items
 
@@ -574,6 +770,8 @@ def _build_window_ranges(summary: Dict[str, object]) -> List[Dict[str, object]]:
             data.get("title"),
             activity_item.get("display_name") or data.get("display_name") or data.get("app_display") or data.get("app_name"),
         )
+        if _is_excluded_app(app) or _is_excluded_app(display_name):
+            continue
         ranges.append(
             {
                 "start": start_ts,
@@ -583,6 +781,49 @@ def _build_window_ranges(summary: Dict[str, object]) -> List[Dict[str, object]]:
             }
         )
     return ranges
+
+
+def _merge_input_items(items: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    grouped: Dict[str, Dict[str, object]] = {}
+    for item in items:
+        app = _normalize_app_name(item.get("app"))
+        display_name = _resolve_display_name(
+            app,
+            "",
+            item.get("display_name") or item.get("app_display") or item.get("app_name"),
+        )
+        group_key = _normalize_alias_key(display_name)
+        current = grouped.get(group_key)
+        if current is None:
+            grouped[group_key] = {
+                "app": app,
+                "display_name": display_name,
+                "presses": int(item.get("presses", 0) or 0),
+                "clicks": int(item.get("clicks", 0) or 0),
+                "scroll": int(item.get("scroll", 0) or 0),
+                "moves": int(item.get("moves", 0) or 0),
+                "total": int(item.get("total", 0) or 0),
+            }
+            continue
+
+        current["presses"] += int(item.get("presses", 0) or 0)
+        current["clicks"] += int(item.get("clicks", 0) or 0)
+        current["scroll"] += int(item.get("scroll", 0) or 0)
+        current["moves"] += int(item.get("moves", 0) or 0)
+        current["total"] += int(item.get("total", 0) or 0)
+        if _normalize_alias_key(current.get("app")) != group_key:
+            current["app"] = app
+
+    merged_items = list(grouped.values())
+    merged_items.sort(
+        key=lambda item: (
+            -item["total"],
+            -item["presses"],
+            str(item.get("display_name", "")),
+            item["app"],
+        )
+    )
+    return merged_items
 
 
 def build_input_by_app(
@@ -596,10 +837,17 @@ def build_input_by_app(
     input_events = events if events is not None else _load_input_events(start, end, client=client)
     if input_events is None:
         key_stats_day = _resolve_key_stats_day_payload(start, end)
-        return _build_key_stats_by_app(key_stats_day, top_n=top_n) if key_stats_day else []
+        items = _build_key_stats_by_app(key_stats_day, top_n=0) if key_stats_day else []
+        merged_items = _merge_input_items(items)
+        return merged_items[:top_n] if top_n > 0 else merged_items
 
     target_tz = _summary_timezone(summary) or _extract_timezone(start) or _extract_timezone(end)
     window_ranges = _build_window_ranges(summary)
+    window_ranges = [
+        item
+        for item in window_ranges
+        if not _is_excluded_app(item.get("app")) and not _is_excluded_app(item.get("display_name"))
+    ]
     if not window_ranges:
         return []
 
@@ -635,17 +883,12 @@ def build_input_by_app(
     items = [
         {"app": app, **values}
         for app, values in stats.items()
-        if values["total"] > 0 or values["moves"] > 0
+        if (values["total"] > 0 or values["moves"] > 0)
+        and not _is_excluded_app(app)
+        and not _is_excluded_app(values.get("display_name"))
     ]
-    items.sort(
-        key=lambda item: (
-            -item["total"],
-            -item["presses"],
-            str(item.get("display_name", "")),
-            item["app"],
-        )
-    )
-    return items[:top_n] if top_n > 0 else items
+    merged_items = _merge_input_items(items)
+    return merged_items[:top_n] if top_n > 0 else merged_items
 
 
 def build_input_stats_by_top_apps(
@@ -781,10 +1024,34 @@ def _extract_browser_domain(data: Dict[str, object]) -> str:
     return _normalize_domain(data.get("url") or "")
 
 
+def _is_local_network_domain(domain: object) -> bool:
+    normalized = _normalize_domain(domain)
+    if normalized in {"未知域名", "localhost"}:
+        return True
+    if normalized.endswith(".local"):
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_private or ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def _projected_days(time_range: Dict[str, object], events: List[Dict[str, object]]) -> int:
+    if not time_range:
+        return 0
+
+    start_tz = _extract_timezone(time_range.get("start")) or _system_timezone()
+    start_text = time_range.get("start")
+    end_text = time_range.get("end")
+    if isinstance(start_text, str) and isinstance(end_text, str):
+        start_dt = _convert_to_timezone(_parse_timestamp(start_text), start_tz)
+        end_dt = _convert_to_timezone(_parse_timestamp(end_text), start_tz)
+        if end_dt >= start_dt:
+            return max((end_dt.date() - start_dt.date()).days + 1, 1)
+
     return max(
         1,
-        len({event["start"].date().isoformat() for event in events}) or (1 if time_range else 0),
+        len({event["start"].date().isoformat() for event in events}) or 1,
     )
 
 
@@ -835,25 +1102,30 @@ def _build_browser_url_counts(summary: Dict[str, object]) -> Dict[str, int]:
 def build_browser_by_domain(
     summary: Dict[str, object], limit: int = 12
 ) -> List[Dict[str, object]]:
-    browser = _browser_result(summary)
-    total_duration = _to_seconds(browser.get("duration", 0))
-    url_counts = _build_browser_url_counts(summary)
+    browser_events = _iter_browser_events(summary, min_duration=0)
+    if not browser_events:
+        return []
 
-    items: List[Dict[str, object]] = []
-    for event in browser.get("domains", []) or []:
-        data = event.get("data", {}) if isinstance(event, dict) else {}
-        domain = _extract_browser_domain(data)
-        duration = _to_seconds(event.get("duration", 0))
-        if duration <= 0:
+    totals: Dict[str, float] = defaultdict(float)
+    url_counts: Dict[str, int] = defaultdict(int)
+    for event in browser_events:
+        domain = _normalize_domain(event.get("domain") or "")
+        if _is_local_network_domain(domain):
             continue
-        items.append(
-            {
-                "domain": domain,
-                "duration": duration,
-                "share": duration / total_duration if total_duration > 0 else 0.0,
-                "urlCount": int(url_counts.get(domain, 0)),
-            }
-        )
+        totals[domain] += _to_seconds(event.get("duration", 0))
+        url_counts[domain] += 1
+
+    total_duration = sum(totals.values())
+    items = [
+        {
+            "domain": domain,
+            "duration": duration,
+            "share": duration / total_duration if total_duration > 0 else 0.0,
+            "urlCount": int(url_counts.get(domain, 0)),
+        }
+        for domain, duration in totals.items()
+        if duration > 0
+    ]
 
     items.sort(key=lambda item: (-item["duration"], item["domain"]))
     return items[:limit] if limit > 0 else items
@@ -918,7 +1190,10 @@ def _iter_browser_events(
             }
         )
 
-    return sorted(browser_events, key=lambda item: item["start"])
+    filtered_events = [
+        event for event in browser_events if not _is_local_network_domain(event.get("domain"))
+    ]
+    return sorted(filtered_events, key=lambda item: item["start"])
 
 
 def build_browser_trend(

@@ -231,6 +231,7 @@ class Manager:
     def __init__(self, testing: bool = False) -> None:
         self.testing = testing
         self.modules: List[Module] = []
+        self._paused_modules: List[str] = []
         self.discover_modules()
 
     @property
@@ -275,6 +276,20 @@ class Manager:
         candidates.sort(key=_start_priority)
         candidates[0].start(self.testing)
 
+    def pause_tracking(self) -> None:
+        paused_modules: List[str] = []
+        for module in [m for m in self.modules if m.is_alive() and m.name != "aw-server" and not m.name.startswith("aw-server-")]:
+            paused_modules.append(module.name)
+            module.stop()
+        self._paused_modules = paused_modules
+
+    def resume_tracking(self) -> None:
+        module_names = list(dict.fromkeys(self._paused_modules))
+        self._paused_modules = []
+        for module_name in module_names:
+            self.start(module_name)
+
     def stop_all(self) -> None:
+        self._paused_modules = []
         for module in [m for m in self.modules if m.is_alive()]:
             module.stop()
