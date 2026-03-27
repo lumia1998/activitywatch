@@ -91,13 +91,16 @@ def test_frontend_daily_summary_layout_containers_exist():
     assert '.settings-chip {' in style_css
     assert '.settings-form-grid {' in style_css
     assert '.settings-row {' in style_css
+    assert 'await persistSettings(false);' in app_js
+    assert "addExcludedApp().catch(console.error);" in app_js
+    assert "removeExcludedApp(button.dataset.app || '').catch(console.error);" in app_js
     assert 'function renderDetectedApps()' in app_js
     assert 'await api.get_detected_apps(50);' in app_js
     assert 'function renderAliasList()' in app_js
     assert 'function addAlias()' in app_js
     assert 'function removeAlias(appName)' in app_js
-    assert 'applyDetectedAppAsExcluded(' in app_js
-    assert 'applyDetectedAppAsAlias(' in app_js
+    assert 'await persistSettings(false);' in app_js
+    assert "removeAlias(button.dataset.aliasApp || '').catch(console.error);" in app_js
     assert 'function openSettingsFromTray()' in app_js
     assert 'await loadSettings();' in app_js
     assert 'openSettingsFromTray' in app_js

@@ -717,11 +717,12 @@ async function addAlias() {
   await persistSettings(false);
 }
 
-function removeAlias(appName) {
+async function removeAlias(appName) {
   const nextAliases = { ...(appState.settings.app_aliases || {}) };
   delete nextAliases[appName];
   appState.settings.app_aliases = sortAliases(nextAliases);
   renderAliasList();
+  await persistSettings(false);
 }
 
 
@@ -765,7 +766,7 @@ function renderExcludedApps() {
   });
 }
 
-function addExcludedApp() {
+async function addExcludedApp() {
   const appName = normalizeExcludedAppName(excludedAppInputEl?.value);
   if (!appName) return;
   const items = new Set(appState.settings.excluded_apps || []);
@@ -776,11 +777,13 @@ function addExcludedApp() {
     excludedAppInputEl.focus();
   }
   renderExcludedApps();
+  await persistSettings(false);
 }
 
-function removeExcludedApp(appName) {
+async function removeExcludedApp(appName) {
   appState.settings.excluded_apps = (appState.settings.excluded_apps || []).filter(item => item !== appName);
   renderExcludedApps();
+  await persistSettings(false);
 }
 
 async function loadSettings() {
@@ -803,7 +806,7 @@ async function persistSettings(closeAfterSave = false) {
   };
   renderExcludedApps();
   renderAliasList();
-  renderDetectedApps();
+  await loadDetectedApps();
   if (closeAfterSave) {
     closeSettingsModal();
   }
@@ -906,13 +909,13 @@ if (settingsCloseBtn) {
   settingsCloseBtn.addEventListener('click', () => closeSettingsModal());
 }
 if (addExcludedAppBtn) {
-  addExcludedAppBtn.addEventListener('click', () => addExcludedApp());
+  addExcludedAppBtn.addEventListener('click', () => addExcludedApp().catch(console.error));
 }
 if (excludedAppInputEl) {
   excludedAppInputEl.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      addExcludedApp();
+      addExcludedApp().catch(console.error);
     }
   });
 }
@@ -920,7 +923,7 @@ if (excludedAppsListEl) {
   excludedAppsListEl.addEventListener('click', event => {
     const button = event.target.closest('[data-app]');
     if (!button) return;
-    removeExcludedApp(button.dataset.app || '');
+    removeExcludedApp(button.dataset.app || '').catch(console.error);
   });
 }
 if (addAliasBtn) {
@@ -940,7 +943,7 @@ if (aliasListEl) {
   aliasListEl.addEventListener('click', event => {
     const button = event.target.closest('[data-alias-app]');
     if (!button) return;
-    removeAlias(button.dataset.aliasApp || '');
+    removeAlias(button.dataset.aliasApp || '').catch(console.error);
   });
 }
 if (settingsSaveBtn) {

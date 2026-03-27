@@ -98,6 +98,11 @@ def get_detected_apps(limit: int = 50) -> List[Dict[str, str]]:
         display_name = display_name.strip()
         if not app_name or not display_name:
             continue
+
+        alias = WINDOW_APP_ALIASES.get(_normalize_alias_key(app_name))
+        if alias:
+            display_name = alias
+
         items.append({"app": app_name, "display_name": display_name})
 
     unique_items: List[Dict[str, str]] = []
