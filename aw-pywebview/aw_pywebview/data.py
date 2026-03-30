@@ -383,14 +383,15 @@ def _extract_activity_item(ev: Dict[str, object]) -> Dict[str, object]:
     data = ev.get("data", {}) if isinstance(ev, dict) else {}
     app = _normalize_app_name(data.get("app"))
     title = data.get("title", "") if isinstance(data.get("title"), str) else ""
+    raw_display_name = data.get("display_name") or data.get("app_display") or data.get("app_name") or ""
     display_name = _resolve_display_name(
         app_name=app,
         title=title,
-        preferred=data.get("display_name") or data.get("app_display") or data.get("app_name"),
+        preferred=raw_display_name,
     )
     if _is_excluded_app(app) or _is_excluded_app(display_name):
         return {}
-    _record_detected_app(app, display_name)
+    _record_detected_app(app, raw_display_name or display_name)
     return {
         "app": app,
         "display_name": display_name,

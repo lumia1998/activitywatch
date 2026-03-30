@@ -26,6 +26,7 @@ class TrayController:
         self._tray_icon = None
         self._is_quitting = False
         self._is_paused = False
+        self._is_restoring = False
         self._monitor_stop = threading.Event()
         self._monitor_thread: Optional[threading.Thread] = None
         self._tray_thread: Optional[threading.Thread] = None
@@ -53,11 +54,12 @@ class TrayController:
                 image,
                 "ActivityWatch",
                 menu=pystray.Menu(
-                    pystray.MenuItem("显示窗口", self._on_show_window),
+                    pystray.MenuItem("显示窗口", self._on_show_window, default=True),
                     pystray.MenuItem("设置", self._on_open_settings),
                     pystray.MenuItem(self._pause_menu_label, self._on_toggle_pause),
                     pystray.MenuItem("退出", self._on_quit),
                 ),
+                action=self._on_show_window,
             )
             self._tray_thread = threading.Thread(target=self._run_tray, name="aw-tray-icon", daemon=True)
             self._tray_thread.start()
@@ -74,7 +76,7 @@ class TrayController:
             logger.exception("Tray icon loop failed")
 
     def hide_window(self) -> None:
-        if not self.is_available:
+        if not self.is_available or self._is_restoring:
             return
         try:
             self._window.hide()
@@ -82,27 +84,46 @@ class TrayController:
             logger.exception("Failed to hide window to tray")
 
     def show_window(self) -> None:
+        self._is_restoring = True
         try:
-            self._window.restore()
-        except Exception:
-            logger.debug("Window restore failed", exc_info=True)
+            try:
+                self._window.show()
+            except Exception:
+                logger.exception("Failed to show window from tray")
 
-        try:
-            self._window.show()
-        except Exception:
-            logger.exception("Failed to show window from tray")
-            return
+            try:
+                self._window.restore()
+            except Exception:
+                logger.debug("Window restore failed", exc_info=True)
 
-        native = getattr(self._window, "native", None)
-        if native is not None:
-            for attr_name in ("Activate", "activate"):
-                activate = getattr(native, attr_name, None)
-                if callable(activate):
-                    try:
-                        activate()
-                        break
-                    except Exception:
-                        logger.debug("Native activate failed", exc_info=True)
+            native = getattr(self._window, "native", None)
+            if native is not None:
+                # For Windows (win32/winforms)
+                for attr_name in ("Activate", "activate", "Focus", "focus"):
+                    activate = getattr(native, attr_name, None)
+                    if callable(activate):
+                        try:
+                            activate()
+                            break
+                        except Exception:
+                            logger.debug("Native activate failed", exc_info=True)
+                # Try to bring to top
+                for attr_name in ("BringToFront", "bringToFront"):
+                    bring_to_front = getattr(native, attr_name, None)
+                    if callable(bring_to_front):
+                        try:
+                            bring_to_front()
+                            break
+                        except Exception:
+                            logger.debug("Native BringToFront failed", exc_info=True)
+        finally:
+            # Give it a bit of time for state to propagate before allowing monitor to hide it again
+            def _reset_restoring():
+                import time
+                time.sleep(1.0)
+                self._is_restoring = False
+
+            threading.Thread(target=_reset_restoring, daemon=True).start()
 
     def open_settings(self) -> None:
         self.show_window()

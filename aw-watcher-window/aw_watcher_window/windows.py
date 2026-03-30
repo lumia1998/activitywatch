@@ -178,8 +178,6 @@ def _is_real_window(hwnd) -> bool:
             return False
         if _get_root_window(hwnd) != hwnd:
             return False
-        if _is_minimized_window(hwnd):
-            return False
         if _is_cloaked_window(hwnd):
             return False
     except Exception:

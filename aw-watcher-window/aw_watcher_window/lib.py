@@ -62,7 +62,11 @@ def get_current_window_windows() -> Optional[dict]:
     if title is None:
         title = "unknown"
 
-    payload = {"app": app, "title": title}
+    payload = {
+        "app": app,
+        "title": title,
+        "minimized": windows._is_minimized_window(window_handle),
+    }
     if display_name:
         payload["display_name"] = display_name
     if process_name:

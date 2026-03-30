@@ -571,7 +571,7 @@ function sortExcludedApps(items) {
 }
 
 function normalizeExcludedAppName(value) {
-  return String(value || '').trim();
+  return String(value || '').trim().toLowerCase();
 }
 
 function sortAliases(aliases) {
@@ -581,7 +581,7 @@ function sortAliases(aliases) {
 }
 
 function normalizeAliasKey(value) {
-  const normalized = String(value || '').trim().toLowerCase();
+  const normalized = normalizeExcludedAppName(value);
   return normalized.endsWith('.exe') ? normalized.slice(0, -4) : normalized;
 }
 
